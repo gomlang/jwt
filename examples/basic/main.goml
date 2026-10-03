@@ -1,0 +1,61 @@
+package main;
+
+use ecosystem::jwt;
+use ecosystem::jwt::{Algorithm, Key, SignOptions, Validation};
+use std::serde::{Serialize, Deserialize};
+
+#[derive(Serialize, Deserialize)]
+pub struct AccessClaims {
+    pub sub: string,
+    pub iss: string,
+    pub aud: string,
+    pub exp: i64,
+    pub scope: string,
+}
+
+pub fn authorize_read(token: string, key: Key, now: i64) -> Result[string, string] {
+    let validation = Validation {
+        issuer: Option::Some("example-issuer"),
+        audience: Option::Some("example-api"),
+        token_type: "at+jwt",
+        now: Option::Some(now),
+        ..Validation::new(Algorithm::HS256),
+    };
+    let verified = jwt::verify(token, Vec::from_array([key]), validation).map_err(
+        |_| "invalid access token",
+    )?;
+    let claims: AccessClaims = verified.claims().map_err(|_| "invalid access claims")?;
+    if claims.scope != "read" {
+        return Result::Err("read permission required")
+    }
+    Result::Ok(claims.sub)
+}
+
+pub fn example_token(key: Key) -> Result[string, jwt::Error] {
+    jwt::sign(
+        key,
+        AccessClaims {
+            sub: "account-42",
+            iss: "example-issuer",
+            aud: "example-api",
+            exp: 200,
+            scope: "read",
+        },
+        SignOptions { token_type: "at+jwt", ..SignOptions::new() },
+    )
+}
+
+fn run_example() -> Result[string, string] {
+    let key = Key::hmac("example-only-32-byte-test-secret!".to_bytes(), "example-key").map_err(
+        |error| error.to_string(),
+    )?;
+    let token = example_token(key).map_err(|error| error.to_string())?;
+    authorize_read(token, key, 100)
+}
+
+fn main() -> () {
+    match run_example() {
+        Ok(subject) => println(subject),
+        Err(error) => println(error),
+    }
+}

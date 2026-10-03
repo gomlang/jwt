@@ -1,0 +1,5 @@
+[module]
+path = "ecosystem::jwt"
+
+[native]
+go-module = "github.com/gomlang/jwt"

@@ -1,0 +1,324 @@
+package jwt;
+
+use ecosystem::jwt::bindings;
+use std::ffi;
+use std::json;
+use std::serde::{Serialize, Deserialize};
+
+#[derive(Debug, PartialEq)]
+pub enum Algorithm {
+    HS256,
+    RS256,
+    ES256,
+    EdDSA,
+}
+
+impl ToString for Algorithm {
+    fn to_string(self: Algorithm) -> string {
+        match self {
+            Algorithm::HS256 => "HS256",
+            Algorithm::RS256 => "RS256",
+            Algorithm::ES256 => "ES256",
+            Algorithm::EdDSA => "EdDSA",
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum ErrorKind {
+    Key,
+    Limit,
+    Format,
+    Json,
+    Algorithm,
+    Header,
+    Signature,
+    Claims,
+    Expired,
+    NotYetValid,
+    IssuedAt,
+    Issuer,
+    Audience,
+    Serialization,
+}
+
+#[derive(Debug)]
+pub struct Error {
+    pub kind: ErrorKind,
+    pub message: string,
+}
+
+impl ToString for Error {
+    fn to_string(self: Error) -> string {
+        self.message
+    }
+}
+
+fn text(value: ffi::String) -> string {
+    ffi::string_text(value).unwrap_or("format: invalid native UTF-8")
+}
+
+fn check(error: ffi::String) -> Result[(), Error] {
+    let message = text(error);
+    if message == "" {
+        return Result::Ok(())
+    }
+    let kind = if message.starts_with("key:") {
+        ErrorKind::Key
+    } else if message.starts_with("limit:") {
+        ErrorKind::Limit
+    } else if message.starts_with("json:") {
+        ErrorKind::Json
+    } else if message.starts_with("algorithm:") {
+        ErrorKind::Algorithm
+    } else if message.starts_with("header:") {
+        ErrorKind::Header
+    } else if message.starts_with("signature:") {
+        ErrorKind::Signature
+    } else if message.starts_with("claims:") {
+        ErrorKind::Claims
+    } else if message.starts_with("expired:") {
+        ErrorKind::Expired
+    } else if message.starts_with("not_yet_valid:") {
+        ErrorKind::NotYetValid
+    } else if message.starts_with("issued_at:") {
+        ErrorKind::IssuedAt
+    } else if message.starts_with("issuer:") {
+        ErrorKind::Issuer
+    } else if message.starts_with("audience:") {
+        ErrorKind::Audience
+    } else {
+        ErrorKind::Format
+    };
+    Result::Err(Error { kind, message })
+}
+
+pub struct Key {
+    raw: bindings::NativeKey,
+}
+
+impl Key {
+    pub fn hmac(secret: Vec[u8], key_id: string) -> Result[Key, Error] {
+        if secret.len() < 32 || secret.len() > 65536 {
+            return Result::Err(
+                Error { kind: ErrorKind::Key, message: "HS256 requires 32..65536 secret bytes" },
+            )
+        }
+        let (raw, error) = bindings::hmac_key(
+            ffi::slice_from_vec_copy(secret),
+            ffi::string_from_text(key_id),
+        );
+        check(error)?;
+        Result::Ok(Key { raw })
+    }
+
+    pub fn private_pem(algorithm: Algorithm, pem: string, key_id: string) -> Result[Key, Error] {
+        pem_key(algorithm, pem, key_id, true)
+    }
+
+    pub fn public_pem(algorithm: Algorithm, pem: string, key_id: string) -> Result[Key, Error] {
+        pem_key(algorithm, pem, key_id, false)
+    }
+
+    pub fn key_id(self: Key) -> string {
+        text(bindings::key_id(self.raw))
+    }
+
+    pub fn algorithm(self: Key) -> string {
+        text(bindings::key_algorithm(self.raw))
+    }
+}
+
+fn pem_key(algorithm: Algorithm, pem: string, key_id: string, private: bool) -> Result[Key, Error] {
+    let (raw, error) = bindings::pem_key(
+        ffi::string_from_text(algorithm.to_string()),
+        ffi::string_from_text(pem),
+        ffi::string_from_text(key_id),
+        private,
+    );
+    check(error)?;
+    Result::Ok(Key { raw })
+}
+
+pub struct SignOptions {
+    pub token_type: string,
+    pub max_token_bytes: isize,
+}
+
+impl SignOptions {
+    pub fn new() -> SignOptions {
+        SignOptions { token_type: "JWT", max_token_bytes: 65536 }
+    }
+}
+
+pub struct Validation {
+    pub algorithms: Vec[Algorithm],
+    pub now: Option[i64],
+    pub leeway_seconds: i64,
+    pub issuer: Option[string],
+    pub audience: Option[string],
+    pub token_type: string,
+    pub require_expiration: bool,
+    pub check_issued_at: bool,
+    pub max_token_bytes: isize,
+}
+
+impl Validation {
+    pub fn new(algorithm: Algorithm) -> Validation {
+        Validation {
+            algorithms: Vec::from_array([algorithm]),
+            now: Option::None,
+            leeway_seconds: 0,
+            issuer: Option::None,
+            audience: Option::None,
+            token_type: "JWT",
+            require_expiration: true,
+            check_issued_at: true,
+            max_token_bytes: 65536,
+        }
+    }
+}
+
+pub struct Verified {
+    claims_json: string,
+    selected_key_id: string,
+}
+
+impl Verified {
+    pub fn key_id(self: Verified) -> string {
+        self.selected_key_id
+    }
+
+    pub fn claims_json(self: Verified) -> string {
+        self.claims_json
+    }
+
+    pub fn claims[T: Deserialize](self: Verified) -> Result[T, Error] {
+        json::from_string_with_limits(self.claims_json, decode_limits()).map_err(
+            |_| Error {
+                kind: ErrorKind::Serialization,
+                message: "claims do not match the requested type",
+            },
+        )
+    }
+
+    pub fn value(self: Verified) -> Result[json::Value, Error] {
+        json::parse_with_limits(self.claims_json, decode_limits()).map_err(
+            |_| Error {
+                kind: ErrorKind::Serialization,
+                message: "claims cannot be represented as JSON",
+            },
+        )
+    }
+}
+
+fn decode_limits() -> json::DecodeLimits {
+    json::DecodeLimits {
+        max_input_bytes: 1048576,
+        max_value_bytes: 1048576,
+        max_depth: 64,
+        max_values: 16384,
+        max_string_bytes: 1048576,
+        max_number_bytes: 1024,
+        max_container_entries: 16384,
+        max_path_bytes: 1048576,
+        max_serde_frames: 65536,
+        max_events: 65536,
+    }
+}
+
+fn encode_limits(limit: isize) -> json::EncodeLimits {
+    json::EncodeLimits {
+        max_output_bytes: limit,
+        max_depth: 64,
+        max_values: 16384,
+        max_string_bytes: limit,
+        max_number_bytes: 1024,
+        max_container_entries: 16384,
+        max_path_bytes: limit,
+        max_serde_frames: 65536,
+        max_events: 65536,
+    }
+}
+
+pub fn sign_json(key: Key, claims: string, options: SignOptions) -> Result[string, Error] {
+    let (token, error) = bindings::sign(
+        key.raw,
+        ffi::string_from_text(claims),
+        ffi::string_from_text(options.token_type),
+        options.max_token_bytes,
+    );
+    check(error)?;
+    Result::Ok(text(token))
+}
+
+pub fn sign[T: Serialize](key: Key, claims: T, options: SignOptions) -> Result[string, Error] {
+    if options.max_token_bytes < 256 || options.max_token_bytes > 1048576 {
+        return Result::Err(
+            Error { kind: ErrorKind::Limit, message: "token limit must be 256..1048576 bytes" },
+        )
+    }
+    let encoded = json::to_string_with_limits(claims, encode_limits(options.max_token_bytes)).map_err(
+        |_| Error {
+            kind: ErrorKind::Serialization,
+            message: "claims serialization failed or exceeded limits",
+        },
+    )?;
+    sign_json(key, encoded, options)
+}
+
+pub fn verify(token: string, keys: Vec[Key], validation: Validation) -> Result[Verified, Error] {
+    if keys.len() == 0 || keys.len() > 64 || validation.algorithms.len() == 0
+        || validation.algorithms.len() > 4
+        || validation.max_token_bytes < 256
+        || validation.max_token_bytes > 1048576
+        || token.byte_len() > validation.max_token_bytes {
+        return Result::Err(
+            Error {
+                kind: ErrorKind::Limit,
+                message: "invalid verification configuration or token size",
+            },
+        )
+    }
+    if let Some(issuer) = validation.issuer {
+        if issuer == "" {
+            return Result::Err(
+                Error { kind: ErrorKind::Issuer, message: "configured issuer must be nonempty" },
+            )
+        }
+    }
+    if let Some(audience) = validation.audience {
+        if audience == "" {
+            return Result::Err(
+                Error { kind: ErrorKind::Audience, message: "configured audience must be nonempty" },
+            )
+        }
+    }
+    let raw_keys = Vec::new();
+    for key in keys {
+        raw_keys.push(key.raw);
+    }
+    let algorithms = Vec::new();
+    for algorithm in validation.algorithms {
+        algorithms.push(ffi::string_from_text(algorithm.to_string()));
+    }
+    let now = match validation.now {
+        Some(value) => value,
+        None => bindings::now(),
+    };
+    let (claims, key_id, error) = bindings::verify(
+        ffi::slice_from_vec_copy(raw_keys),
+        ffi::string_from_text(token),
+        ffi::slice_from_vec_copy(algorithms),
+        ffi::string_from_text(validation.issuer.unwrap_or("")),
+        ffi::string_from_text(validation.audience.unwrap_or("")),
+        ffi::string_from_text(validation.token_type),
+        now,
+        validation.leeway_seconds,
+        validation.require_expiration,
+        validation.check_issued_at,
+        validation.max_token_bytes,
+    );
+    check(error)?;
+    Result::Ok(Verified { claims_json: text(claims), selected_key_id: text(key_id) })
+}

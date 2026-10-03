@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "package": "bindings",
+  "output": "bindings/generated.goml",
+  "go_package": "adapter",
+  "go_output": "adapter/generated.go",
+  "go_import_path": "github.com/gomlang/jwt/adapter",
+  "types": [
+    {
+      "name": "NativeKey",
+      "import_path": "github.com/gomlang/jwt/adapter",
+      "symbol": "Key"
+    }
+  ],
+  "functions": [
+    {
+      "name": "hmac_key",
+      "import_path": "github.com/gomlang/jwt/adapter",
+      "symbol": "HMACKey"
+    },
+    {
+      "name": "pem_key",
+      "import_path": "github.com/gomlang/jwt/adapter",
+      "symbol": "PEMKey"
+    },
+    {
+      "name": "key_id",
+      "import_path": "github.com/gomlang/jwt/adapter",
+      "symbol": "KeyID"
+    },
+    {
+      "name": "key_algorithm",
+      "import_path": "github.com/gomlang/jwt/adapter",
+      "symbol": "KeyAlgorithm"
+    },
+    {
+      "name": "now",
+      "import_path": "github.com/gomlang/jwt/adapter",
+      "symbol": "Now"
+    },
+    {
+      "name": "sign",
+      "import_path": "github.com/gomlang/jwt/adapter",
+      "symbol": "Sign"
+    },
+    {
+      "name": "verify",
+      "import_path": "github.com/gomlang/jwt/adapter",
+      "symbol": "Verify"
+    }
+  ]
+}

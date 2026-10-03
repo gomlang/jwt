@@ -1,0 +1,45 @@
+package bindings;
+
+use std::ffi;
+
+#[go_type("github.com/gomlang/jwt/adapter", "Key")]
+pub extern type NativeKey;
+
+#[go_ffi("github.com/gomlang/jwt/adapter", "GomlBind_hmac_key")]
+pub extern fn hmac_key(p0: ffi::RawSlice[u8], p1: ffi::String) -> (NativeKey, ffi::String);
+
+#[go_ffi("github.com/gomlang/jwt/adapter", "GomlBind_key_algorithm")]
+pub extern fn key_algorithm(p0: NativeKey) -> ffi::String;
+
+#[go_ffi("github.com/gomlang/jwt/adapter", "GomlBind_key_id")]
+pub extern fn key_id(p0: NativeKey) -> ffi::String;
+
+#[go_ffi("github.com/gomlang/jwt/adapter", "GomlBind_now")]
+pub extern fn now() -> i64;
+
+#[go_ffi("github.com/gomlang/jwt/adapter", "GomlBind_pem_key")]
+pub extern fn pem_key(p0: ffi::String, p1: ffi::String, p2: ffi::String, p3: bool) -> (
+    NativeKey,
+    ffi::String,
+);
+
+#[go_ffi("github.com/gomlang/jwt/adapter", "GomlBind_sign")]
+pub extern fn sign(p0: NativeKey, p1: ffi::String, p2: ffi::String, p3: isize) -> (
+    ffi::String,
+    ffi::String,
+);
+
+#[go_ffi("github.com/gomlang/jwt/adapter", "GomlBind_verify")]
+pub extern fn verify(
+    p0: ffi::RawSlice[NativeKey],
+    p1: ffi::String,
+    p2: ffi::RawSlice[ffi::String],
+    p3: ffi::String,
+    p4: ffi::String,
+    p5: ffi::String,
+    p6: i64,
+    p7: i64,
+    p8: bool,
+    p9: bool,
+    p10: isize,
+) -> (ffi::String, ffi::String, ffi::String);
