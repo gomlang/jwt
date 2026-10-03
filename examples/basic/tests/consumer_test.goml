@@ -1,0 +1,39 @@
+package tests;
+
+use ecosystem::jwt;
+use ecosystem::jwt::{Key, SignOptions};
+use ecosystem::jwt::examples::basic;
+use std::testing;
+
+#[test]
+fn authorization_consumer_enforces_signature_scope_and_expiration() -> () {
+    let key = testing::expect_ok(
+        Key::hmac("example-only-32-byte-test-secret!".to_bytes(), "example-key"),
+        "example key",
+    );
+    let token = testing::expect_ok(basic::example_token(key), "access token");
+    testing::assert_eq(
+        testing::expect_ok(basic::authorize_read(token, key, 100), "authorize"),
+        "account-42",
+    );
+    testing::assert(basic::authorize_read(token, key, 200).is_err());
+    let denied = testing::expect_ok(
+        jwt::sign(
+            key,
+            basic::AccessClaims {
+                sub: "account-42",
+                iss: "example-issuer",
+                aud: "example-api",
+                exp: 200,
+                scope: "write",
+            },
+            SignOptions { token_type: "at+jwt", ..SignOptions::new() },
+        ),
+        "write-only token",
+    );
+    testing::assert_eq(
+        testing::expect_err(basic::authorize_read(denied, key, 100), "permission denied"),
+        "read permission required",
+    );
+    testing::assert(basic::authorize_read(token + "x", key, 100).is_err());
+}

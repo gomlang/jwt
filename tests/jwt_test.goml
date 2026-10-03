@@ -1,0 +1,185 @@
+package tests;
+
+use ecosystem::jwt;
+use ecosystem::jwt::{Algorithm, Key, SignOptions, Validation, ErrorKind};
+use std::serde::{Serialize, Deserialize};
+use std::encoding::base64;
+use std::testing;
+use std::json;
+
+#[derive(Serialize, Deserialize)]
+struct Claims {
+    sub: string,
+    iss: string,
+    aud: Vec[string],
+    exp: i64,
+    nbf: i64,
+    iat: i64,
+    role: string,
+}
+
+fn key(id: string) -> Key {
+    testing::expect_ok(Key::hmac("0123456789abcdef0123456789abcdef".to_bytes(), id), "HMAC key")
+}
+
+#[test]
+fn public_ed25519_pem_keeps_algorithm_and_verification_only_binding() -> () {
+    let pem = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n";
+    let public = testing::expect_ok(
+        Key::public_pem(Algorithm::EdDSA, pem, "published-rfc8037-key"),
+        "public Ed25519 PEM",
+    );
+    testing::assert_eq(public.algorithm(), "EdDSA");
+    testing::assert_eq(public.key_id(), "published-rfc8037-key");
+    testing::assert(Key::public_pem(Algorithm::RS256, pem, "").is_err());
+    testing::assert(Key::private_pem(Algorithm::EdDSA, pem, "").is_err());
+    testing::assert_eq(
+        testing::expect_err(
+            jwt::sign_json(public, "{\"exp\":200}", SignOptions::new()),
+            "public key cannot sign",
+        ).kind,
+        ErrorKind::Key,
+    );
+}
+
+#[test]
+fn rfc7515_hmac_vector_passes_through_public_api() -> () {
+    let secret = testing::expect_ok(
+        base64::decode_with(
+            "AyM1SysPpbyDfgZld3umj1qzKObwVMkoqQ-EstJQLr_T-1qS0gZH75aKtMN3Yj0iPS4hcgUuTwjAzZr1Z9CAow",
+            base64::Variant::UrlSafeNoPadding,
+        ),
+        "RFC key",
+    );
+    let active = testing::expect_ok(Key::hmac(secret.to_vec(), ""), "RFC HMAC key");
+    let token = "eyJ0eXAiOiJKV1QiLA0KICJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJqb2UiLA0KICJleHAiOjEzMDA4MTkzODAsDQogImh0dHA6Ly9leGFtcGxlLmNvbS9pc19yb290Ijp0cnVlfQ.dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let validation = Validation {
+        issuer: Option::Some("joe"),
+        now: Option::Some(1300819379),
+        ..Validation::new(Algorithm::HS256),
+    };
+    let verified = testing::expect_ok(
+        jwt::verify(token, Vec::from_array([active]), validation),
+        "RFC signed JWT",
+    );
+    testing::assert(verified.claims_json().contains("joe"));
+}
+
+fn policy() -> Validation {
+    Validation {
+        now: Option::Some(100),
+        issuer: Option::Some("issuer"),
+        audience: Option::Some("api"),
+        ..Validation::new(Algorithm::HS256),
+    }
+}
+
+fn claims() -> Claims {
+    Claims {
+        sub: "account-42",
+        iss: "issuer",
+        aud: Vec::from_array(["api", "other"]),
+        exp: 200,
+        nbf: 90,
+        iat: 90,
+        role: "reader",
+    }
+}
+
+#[test]
+fn typed_claims_and_dynamic_claims_are_verified_before_access() -> () {
+    let active = key("v2");
+    let token = testing::expect_ok(
+        jwt::sign(active, claims(), SignOptions::new()),
+        "sign typed claims",
+    );
+    let verified = testing::expect_ok(
+        jwt::verify(token, Vec::from_array([key("v1"), active]), policy()),
+        "verify rotated key",
+    );
+    testing::assert_eq(verified.key_id(), "v2");
+    let decoded: Claims = testing::expect_ok(verified.claims(), "typed claims");
+    testing::assert_eq(decoded.sub, "account-42");
+    testing::assert_eq(decoded.role, "reader");
+    testing::assert_eq(decoded.exp, 200);
+    let value = testing::expect_ok(verified.value(), "dynamic claims");
+    testing::assert(
+        match value {
+            json::Value::Object(_) => true,
+            _ => false,
+        },
+    );
+    testing::assert_eq(active.algorithm(), "HS256");
+    testing::assert_eq(active.key_id(), "v2");
+}
+
+#[test]
+fn expiration_and_leeway_apply_at_the_exact_boundary() -> () {
+    let active = key("");
+    let token = testing::expect_ok(jwt::sign(active, claims(), SignOptions::new()), "token");
+    let expired = Validation { now: Option::Some(200), ..policy() };
+    let error = testing::expect_err(
+        jwt::verify(token, Vec::from_array([active]), expired),
+        "expired",
+    );
+    testing::assert_eq(error.kind, ErrorKind::Expired);
+    let leeway = Validation { leeway_seconds: 1, ..expired };
+    let _ = testing::expect_ok(jwt::verify(token, Vec::from_array([active]), leeway), "leeway");
+}
+
+#[test]
+fn issuer_audience_and_algorithm_policy_fail_closed() -> () {
+    let active = key("active");
+    let token = testing::expect_ok(jwt::sign(active, claims(), SignOptions::new()), "token");
+    let bad_issuer = Validation { issuer: Option::Some("elsewhere"), ..policy() };
+    testing::assert_eq(
+        testing::expect_err(jwt::verify(token, Vec::from_array([active]), bad_issuer), "issuer").kind,
+        ErrorKind::Issuer,
+    );
+    let empty_issuer = Validation { issuer: Option::Some(""), ..policy() };
+    testing::assert_eq(
+        testing::expect_err(
+            jwt::verify(token, Vec::from_array([active]), empty_issuer),
+            "empty issuer",
+        ).kind,
+        ErrorKind::Issuer,
+    );
+    let empty_audience = Validation { audience: Option::Some(""), ..policy() };
+    testing::assert_eq(
+        testing::expect_err(
+            jwt::verify(token, Vec::from_array([active]), empty_audience),
+            "empty audience",
+        ).kind,
+        ErrorKind::Audience,
+    );
+    let missing_audience = Validation { audience: Option::None, ..policy() };
+    testing::assert_eq(
+        testing::expect_err(
+            jwt::verify(token, Vec::from_array([active]), missing_audience),
+            "audience policy",
+        ).kind,
+        ErrorKind::Audience,
+    );
+    let wrong_alg = Validation { algorithms: Vec::from_array([Algorithm::RS256]), ..policy() };
+    testing::assert_eq(
+        testing::expect_err(jwt::verify(token, Vec::from_array([active]), wrong_alg), "algorithm").kind,
+        ErrorKind::Algorithm,
+    );
+    testing::assert(jwt::verify(token, Vec::from_array([active, active]), policy()).is_err());
+}
+
+#[test]
+fn signing_rejects_duplicate_invalid_or_excessive_claims() -> () {
+    let active = key("");
+    for claims in Vec::from_array(
+        ["{\"exp\":200,\"exp\":300}", "{\"exp\":\"200\"}", "[]", "{\"exp\":200}null"],
+    ) {
+        testing::assert(jwt::sign_json(active, claims, SignOptions::new()).is_err());
+    }
+    testing::assert(Key::hmac("short".to_bytes(), "").is_err());
+    let invalid = Validation { algorithms: Vec::new(), ..policy() };
+    testing::assert(jwt::verify("a.b.c", Vec::from_array([active]), invalid).is_err());
+    testing::assert(
+        jwt::sign(active, claims(), SignOptions { max_token_bytes: 10, ..SignOptions::new() }).is_err(),
+    );
+}
