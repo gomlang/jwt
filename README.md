@@ -61,6 +61,9 @@ fn authenticate(token: string, trusted_key: Key) -> Result[string, string] {
 
 Keys bind permanently to one algorithm. RS256 keys require 2048–8192-bit RSA, ES256 requires P-256, and EdDSA supports Ed25519 only. ES256 signatures use the JWS 64-byte `R || S` representation. Signing requires a private key; private keys may also verify. Key handles contain no mutating API and support concurrent calls. Secret input is copied. `Key` and `Verified` do not implement `Debug`, and library error messages contain no token, claims, PEM or secret values. Garbage collection does not provide guaranteed key erasure.
 
+PEM import accepts one unencrypted block with optional surrounding whitespace.
+Extra blocks, including malformed blocks before an otherwise valid key, are rejected.
+
 `SignOptions::new()` selects `typ = "JWT"` and a 65536-byte final-token limit. Set `token_type` explicitly when producing a more specific token kind such as `at+jwt`.
 
 ## Verification policy

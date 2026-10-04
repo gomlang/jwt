@@ -1,0 +1,16 @@
+package tests;
+
+use ecosystem::jwt::{Algorithm, Key, ErrorKind};
+use std::testing;
+
+#[test]
+fn downstream_pem_import_does_not_skip_malformed_leading_blocks() -> () {
+    let pem = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n";
+    testing::assert_ok(Key::public_pem(Algorithm::EdDSA, pem, ""));
+    let malformed = "-----BEGIN PUBLIC KEY-----\nnot base64!\n-----END PUBLIC KEY-----\n";
+    let error = testing::expect_err(
+        Key::public_pem(Algorithm::EdDSA, malformed + pem, ""),
+        "malformed leading block",
+    );
+    testing::assert_eq(error.kind, ErrorKind::Key);
+}

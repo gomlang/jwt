@@ -39,7 +39,9 @@ func PEMKey(algorithm, input, id string, private bool) (Key, string) {
 		return Key{}, "key: invalid PEM key configuration"
 	}
 	trimmed := strings.TrimSpace(input)
-	if !strings.HasPrefix(trimmed, "-----BEGIN ") {
+	// pem.Decode searches past malformed blocks, so rest alone cannot prove
+	// that the supplied input contained exactly one block.
+	if !strings.HasPrefix(trimmed, "-----BEGIN ") || strings.Count(trimmed, "-----BEGIN ") != 1 {
 		return Key{}, "key: expected one PEM block"
 	}
 	block, rest := pem.Decode([]byte(trimmed))

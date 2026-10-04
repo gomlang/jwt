@@ -33,6 +33,19 @@ fn public_ed25519_pem_keeps_algorithm_and_verification_only_binding() -> () {
     testing::assert_eq(public.key_id(), "published-rfc8037-key");
     testing::assert(Key::public_pem(Algorithm::RS256, pem, "").is_err());
     testing::assert(Key::private_pem(Algorithm::EdDSA, pem, "").is_err());
+    for prefix in[
+        "-----BEGIN PUBLIC KEY-----\nnot base64!\n-----END PUBLIC KEY-----\n",
+        "-----BEGIN PUBLIC KEY-----\nAAAA\n-----END WRONG TYPE-----\n",
+        "-----BEGIN PUBLIC KEY-----\n",
+    ] {
+        testing::assert_eq(
+            testing::expect_err(
+                Key::public_pem(Algorithm::EdDSA, prefix + pem, ""),
+                "malformed leading PEM block",
+            ).kind,
+            ErrorKind::Key,
+        );
+    }
     testing::assert_eq(
         testing::expect_err(
             jwt::sign_json(public, "{\"exp\":200}", SignOptions::new()),
