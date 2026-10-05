@@ -47,6 +47,16 @@
       "name": "verify",
       "import_path": "github.com/gomlang/jwt/adapter",
       "symbol": "Verify"
+    },
+    {
+      "name": "public_jwk",
+      "import_path": "github.com/gomlang/jwt/adapter",
+      "symbol": "PublicJWK"
+    },
+    {
+      "name": "public_jwks",
+      "import_path": "github.com/gomlang/jwt/adapter",
+      "symbol": "PublicJWKS"
     }
   ]
 }

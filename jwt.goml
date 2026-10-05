@@ -120,6 +120,15 @@ impl Key {
         pem_key(algorithm, pem, key_id, false)
     }
 
+    pub fn public_jwk(algorithm: Algorithm, input: string) -> Result[Key, Error] {
+        let (raw, error) = bindings::public_jwk(
+            ffi::string_from_text(algorithm.to_string()),
+            ffi::string_from_text(input),
+        );
+        check(error)?;
+        Result::Ok(Key { raw })
+    }
+
     pub fn key_id(self: Key) -> string {
         text(bindings::key_id(self.raw))
     }
@@ -127,6 +136,28 @@ impl Key {
     pub fn algorithm(self: Key) -> string {
         text(bindings::key_algorithm(self.raw))
     }
+}
+
+pub fn public_jwks(input: string, algorithms: Vec[Algorithm]) -> Result[Vec[Key], Error] {
+    if algorithms.len() == 0 || algorithms.len() > 3 {
+        return Result::Err(
+            Error { kind: ErrorKind::Algorithm, message: "invalid JWK algorithm allowlist" },
+        )
+    }
+    let allowed = Vec::new();
+    for algorithm in algorithms {
+        allowed.push(ffi::string_from_text(algorithm.to_string()));
+    }
+    let (raw, error) = bindings::public_jwks(
+        ffi::string_from_text(input),
+        ffi::slice_from_vec_copy(allowed),
+    );
+    check(error)?;
+    let keys = Vec::new();
+    for key in ffi::slice_to_vec_copy(raw) {
+        keys.push(Key { raw: key });
+    }
+    Result::Ok(keys)
 }
 
 fn pem_key(algorithm: Algorithm, pem: string, key_id: string, private: bool) -> Result[Key, Error] {

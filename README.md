@@ -51,6 +51,8 @@ fn authenticate(token: string, trusted_key: Key) -> Result[string, string] {
 | `Key::hmac(secret: Vec[u8], key_id)` | Copies a 32–65536-byte HS256 secret. Rejects PEM-shaped material. An empty ID omits `kid`. |
 | `Key::private_pem(algorithm, pem, key_id)` | Imports an unencrypted PKCS#8, PKCS#1 RSA or SEC1 EC private PEM key. |
 | `Key::public_pem(algorithm, pem, key_id)` | Imports a PKIX public key or PKCS#1 RSA public key PEM. Rejects private keys and certificates. |
+| `Key::public_jwk(algorithm, json)` | Imports one public RSA, P-256 or Ed25519 JWK for the explicitly chosen verification algorithm. |
+| `jwt::public_jwks(json, algorithms)` | Imports a complete public JWK Set into `Vec[Key]`, with an explicit algorithm allowlist and unique nonempty IDs. |
 | `Key.key_id()`, `Key.algorithm()` | Return metadata without exposing key material. |
 | `jwt::sign(key, claims, SignOptions)` | Serializes a `Serialize` value with bounded JSON encoding and signs it. |
 | `jwt::sign_json(key, claims_json, SignOptions)` | Validates an object and registered claim types, then signs the original JSON bytes. |
@@ -63,6 +65,23 @@ Keys bind permanently to one algorithm. RS256 keys require 2048–8192-bit RSA, 
 
 PEM import accepts one unencrypted block with optional surrounding whitespace.
 Extra blocks, including malformed blocks before an otherwise valid key, are rejected.
+
+### Public JWK and JWK Set import
+
+```goml
+let keys = jwt::public_jwks(trusted_jwks_json, Vec::from_array([Algorithm::RS256]))?;
+let verified = jwt::verify(token, keys, Validation::new(Algorithm::RS256))?;
+```
+
+Applications must obtain the JSON from a trusted source. Import performs no network access, certificate validation or discovery, and token headers cannot supply trusted keys. Imported keys only verify; they cannot sign. Import policy and token verification policy are both explicit.
+
+- `RSA` binds to RS256, `EC` with `crv = "P-256"` to ES256, and `OKP` with `crv = "Ed25519"` to EdDSA. `kty` and the corresponding public parameters are required. A JWK's optional `alg` must exactly match this binding and the requested algorithm. JWKS allows a nonempty list of up to three distinct asymmetric algorithms; every entry must match the list, including entries without `alg`. Unsupported or disallowed entries fail the entire import, with no partial key set returned.
+- Optional `use` must be `"sig"`. Optional `key_ops` must be exactly `["verify"]`. Both may be present when consistent. Missing optional fields are allowed; `null`, wrong types, empty IDs and duplicate operations are rejected. Accepting only the verification operation is a library policy narrower than the general JWK format.
+- A single JWK may omit `kid`, producing an empty local ID. A JWKS requires a nonempty `kid` on every entry and rejects duplicate IDs across all algorithms. IDs obey the existing 256-byte UTF-8 limit and cannot contain NUL, CR or LF. This unique-ID policy is stricter than RFC 7517. Import preserves the JSON array's order; verification retains its existing exact ID/algorithm selection rules.
+- RSA `n` and `e` use unpadded, canonical base64url of the shortest unsigned big-endian integer, with no leading zero byte. The modulus must be odd and 2048–8192 bits; the exponent must be odd and between 3 and 2147483647. These are structural public-key checks, not a proof of modulus factorization. P-256 `x` and `y` each require exactly 32 bytes (including necessary leading zero bytes) and a point on the curve. Ed25519 `x` requires exactly 32 bytes, with signature verification delegated to Go's `crypto/ed25519`, as for PEM keys.
+- Presence of any `d`, `p`, `q`, `dp`, `dq`, `qi`, `oth` or `k` field is rejected, even if null. Known public parameters belonging to another supported key type are also rejected. Unknown extension members are ignored after strict JSON validation. In particular, `x5u`, `x5c` and other certificate metadata are not fetched, parsed or trusted; only the public key parameters are imported.
+
+Single-JWK input is limited to 65536 bytes. JWKS input is limited to 1048576 bytes and 1–64 keys. Both use the existing strict JSON bounds of 64 nesting levels and 16384 values, reject duplicate members at every depth (including escaped duplicate names), and require canonical unpadded base64url with zero unused bits. Errors expose categories and fixed messages without echoing input key material. Byte limits are checked before JSON parsing, and set cardinality is checked before constructing keys.
 
 `SignOptions::new()` selects `typ = "JWT"` and a 65536-byte final-token limit. Set `token_type` explicitly when producing a more specific token kind such as `at+jwt`.
 
@@ -86,7 +105,7 @@ The final token limit is configurable from 256 to 1048576 bytes. Verification ac
 
 The parser rejects padded or noncanonical base64url, whitespace in encoded segments, nonzero unused bits, extra segments, non-object JSON, duplicate object members at every depth, escaped duplicate names, invalid UTF-8, unpaired Unicode surrogates, trailing data and malformed registered claim types. Signature authentication precedes claims parsing. JSON encoding and typed decoding also have explicit bounds.
 
-This release supports compact signed JWTs only. It does not implement JWE, detached payloads, unencoded payloads, general JWS JSON serialization, JWK/JWKS import or retrieval, certificate trust validation, OAuth2, replay storage, revocation or automatic key fetching. Headers carrying `crit`, `b64`, `jku`, `jwk`, `x5u` or `x5c` are rejected. Applications provision trusted local keys and enforce their own authorization and replay policy after verification.
+This release supports compact signed JWTs and local public JWK/JWKS import. It does not implement JWE, detached payloads, unencoded payloads, general JWS JSON serialization, private or symmetric JWK import, JWK/JWKS retrieval, certificate trust validation, OAuth2, replay storage, revocation or automatic key fetching. Headers carrying `crit`, `b64`, `jku`, `jwk`, `x5u` or `x5c` are rejected. Applications provision trusted local keys and enforce their own authorization and replay policy after verification.
 
 ## Validation and references
 
@@ -100,4 +119,4 @@ go test -race ./...
 
 Bindings in `bindings/generated.goml` and `adapter/generated.go` are generated by `goml bind-go`; the companion hash manifest must be retained. The adapter tests include published HMAC and EdDSA vectors, independent RSA/ECDSA/Ed25519 sign/verify operations, signed malformed inputs, algorithm/key confusion, canonical encoding, claim boundaries and concurrency. The GoML suite verifies the public API and the independent authorization consumer.
 
-Design references: [JWS, RFC 7515](https://www.rfc-editor.org/rfc/rfc7515), [JWT, RFC 7519](https://www.rfc-editor.org/rfc/rfc7519), [JWT best practices, RFC 8725](https://www.rfc-editor.org/rfc/rfc8725) and [EdDSA in JOSE, RFC 8037](https://www.rfc-editor.org/rfc/rfc8037). These references describe the protocols; the supported subset and stricter input policy are listed above.
+Design references: [JWS, RFC 7515](https://www.rfc-editor.org/rfc/rfc7515), [JWK, RFC 7517](https://www.rfc-editor.org/rfc/rfc7517), [JWA, RFC 7518](https://www.rfc-editor.org/rfc/rfc7518), [JWT, RFC 7519](https://www.rfc-editor.org/rfc/rfc7519), [JWT best practices, RFC 8725](https://www.rfc-editor.org/rfc/rfc8725) and [EdDSA in JOSE, RFC 8037](https://www.rfc-editor.org/rfc/rfc8037). These references describe the protocols; the supported subset and stricter input policy are listed above.

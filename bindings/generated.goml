@@ -23,6 +23,15 @@ pub extern fn pem_key(p0: ffi::String, p1: ffi::String, p2: ffi::String, p3: boo
     ffi::String,
 );
 
+#[go_ffi("github.com/gomlang/jwt/adapter", "GomlBind_public_jwk")]
+pub extern fn public_jwk(p0: ffi::String, p1: ffi::String) -> (NativeKey, ffi::String);
+
+#[go_ffi("github.com/gomlang/jwt/adapter", "GomlBind_public_jwks")]
+pub extern fn public_jwks(p0: ffi::String, p1: ffi::RawSlice[ffi::String]) -> (
+    ffi::RawSlice[NativeKey],
+    ffi::String,
+);
+
 #[go_ffi("github.com/gomlang/jwt/adapter", "GomlBind_sign")]
 pub extern fn sign(p0: NativeKey, p1: ffi::String, p2: ffi::String, p3: isize) -> (
     ffi::String,

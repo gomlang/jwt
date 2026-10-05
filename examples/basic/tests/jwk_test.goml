@@ -1,0 +1,22 @@
+package tests;
+
+use ecosystem::jwt;
+use ecosystem::jwt::{Algorithm, Key, Validation};
+use std::testing;
+
+#[test]
+fn downstream_imports_public_jwk_and_jwks_for_verification() -> () {
+    let input = "{\"crv\":\"Ed25519\",\"kid\":\"EdDSA\",\"kty\":\"OKP\",\"x\":\"O2onvM62pC1io6jQKm8Nc2UyFXcd4kOmOsBIoYtZ2ik\"}";
+    let token = "eyJhbGciOiJFZERTQSIsImtpZCI6IkVkRFNBIiwidHlwIjoiSldUIn0.eyJleHAiOjIwMCwic3ViIjoicHVibGljLWp3ayJ9.U29a11N2WdTm88CLEs01X5pKvvcsOPl4sZb92tPuasVkm-LENfml-6urAluPj3n3NKvATfpiuumdPa4JNoJaCg";
+    let key = testing::expect_ok(Key::public_jwk(Algorithm::EdDSA, input), "JWK");
+    let policy = Validation { now: Option::Some(100), ..Validation::new(Algorithm::EdDSA) };
+    testing::assert_ok(jwt::verify(token, Vec::from_array([key]), policy));
+    let keys = testing::expect_ok(
+        jwt::public_jwks("{\"keys\":[" + input + "]}", Vec::from_array([Algorithm::EdDSA])),
+        "JWKS",
+    );
+    testing::assert_eq(
+        testing::expect_ok(jwt::verify(token, keys, policy), "verify JWKS").key_id(),
+        "EdDSA",
+    );
+}

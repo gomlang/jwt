@@ -20,6 +20,14 @@ func GomlBind_pem_key(p0 string, p1 string, p2 string, p3 bool) (Key, string) {
     return PEMKey(p0, p1, p2, p3)
 }
 
+func GomlBind_public_jwk(p0 string, p1 string) (Key, string) {
+    return PublicJWK(p0, p1)
+}
+
+func GomlBind_public_jwks(p0 string, p1 []string) ([]Key, string) {
+    return PublicJWKS(p0, p1)
+}
+
 func GomlBind_sign(p0 Key, p1 string, p2 string, p3 int) (string, string) {
     return Sign(p0, p1, p2, p3)
 }

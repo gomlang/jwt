@@ -1,1 +1,1 @@
-{"generator":"goml-bind-go","protocol":1,"goml":"bindings/generated.goml","go":"adapter/generated.go","goml_sha256":"6691df6bf36c5af30cababd128dcac41788db49742db338009159fd30be43c49","go_sha256":"f8dff32faa4a0da0c359c45d8513e62208e61d02d0cc4687693f1737ccaad1df"}
+{"generator":"goml-bind-go","protocol":1,"goml":"bindings/generated.goml","go":"adapter/generated.go","goml_sha256":"192065303920e686b27b83ab5c70c516ea96ef13326981a5de7db343aaca6e58","go_sha256":"e76e9f2b2a7b10271fd0176b9397123adfdefb377533bcc6ded24606b2bf8ec1"}

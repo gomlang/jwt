@@ -1,0 +1,235 @@
+package tests;
+
+use ecosystem::jwt;
+use ecosystem::jwt::{Algorithm, Key, SignOptions, Validation, ErrorKind};
+use std::testing;
+
+fn jwk_vectors() -> Vec[(Algorithm, string, string)] {
+    Vec::from_array(
+        [
+            (
+                Algorithm::RS256,
+                "{\"e\":\"AQAB\",\"kid\":\"RS256\",\"kty\":\"RSA\",\"n\":\"uB7H33am-jOFcG65_MKcQVT6RA-z07Ao7DeprTm-Pjh65eVdvJAqcsaq8E_C-tF48gI449sitDvhlluM6Qssz_tkDKOvDMxcONBMWQm3YFAScCioywhz8oHyPHz59FSVnzVWhGYOwN3fhXqr95D9xirmfw1lo4-u1WmZ2szyefkHknJrU_hl6RZZCOrvys4WEAX4kGRxhjXkQDD5k-tUENTTn0G4dLXv1fdZBwczT1dePuORNryhgLap0BZzubC97_Gd-Che7iPgPjMkywdAE1Wgus9IBsAhmo66Pd-_ETIgkIfyYS6oFPx0CwkS8D3bNsAZi2RwqPkqiuAuIGLqdQ\"}",
+                "eyJhbGciOiJSUzI1NiIsImtpZCI6IlJTMjU2IiwidHlwIjoiSldUIn0.eyJleHAiOjIwMCwic3ViIjoicHVibGljLWp3ayJ9.dVYR_UVKcj7PquVGwWNwzKag3J_X1OaCKyZGTi5tgtUjhuUNG-RPQrpdLiVoIoXeStcX5JRt6vIDyQ2wJUirGjkUdlYnJ3X8LTzIpxuFUNbZ9TYhEedHU5b3kz7VH5Z1P_zPB-rFTgFNABGQB7YQKBWK--4QjAFneq2Fa98XYUMxfToIV97EUmLIt3cnkMEToHJHKtp7XoQ2hId66P_EPXVdb8P4uipG4v1zbE1czCEhjnGQVA3_LMVvSTHwpP9SiUPhiWeAx_lo922HlPqchHW3AHAIJ39TsyZIq9XdaDiqLJUqdZLXSKolAJ4aslOCIpeYyqfSSXwAoPKQJ2kymA",
+            ),
+            (
+                Algorithm::ES256,
+                "{\"crv\":\"P-256\",\"kid\":\"ES256\",\"kty\":\"EC\",\"x\":\"axfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpY\",\"y\":\"T-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU\"}",
+                "eyJhbGciOiJFUzI1NiIsImtpZCI6IkVTMjU2IiwidHlwIjoiSldUIn0.eyJleHAiOjIwMCwic3ViIjoicHVibGljLWp3ayJ9.zzbnaYYGKJf0OSJEHwW_oXScNYCUq-5GChMXs1nzoY-wfQ7RbMMv_y93jhUSVwIhB5gFFtTJk81zazt3BOf1HA",
+            ),
+            (
+                Algorithm::EdDSA,
+                "{\"crv\":\"Ed25519\",\"kid\":\"EdDSA\",\"kty\":\"OKP\",\"x\":\"O2onvM62pC1io6jQKm8Nc2UyFXcd4kOmOsBIoYtZ2ik\"}",
+                "eyJhbGciOiJFZERTQSIsImtpZCI6IkVkRFNBIiwidHlwIjoiSldUIn0.eyJleHAiOjIwMCwic3ViIjoicHVibGljLWp3ayJ9.U29a11N2WdTm88CLEs01X5pKvvcsOPl4sZb92tPuasVkm-LENfml-6urAluPj3n3NKvATfpiuumdPa4JNoJaCg",
+            ),
+        ],
+    )
+}
+
+#[test]
+fn public_jwk_verifies_independent_rsa_ec_and_ed25519_tokens() -> () {
+    for (algorithm, input, token) in jwk_vectors() {
+        let key = testing::expect_ok(Key::public_jwk(algorithm, input), "public JWK");
+        testing::assert_eq(key.algorithm(), algorithm.to_string());
+        testing::assert_eq(key.key_id(), algorithm.to_string());
+        let policy = Validation { now: Option::Some(100), ..Validation::new(algorithm) };
+        let verified = testing::expect_ok(
+            jwt::verify(token, Vec::from_array([key]), policy),
+            "independent token",
+        );
+        testing::assert_eq(verified.claims_json(), "{\"exp\":200,\"sub\":\"public-jwk\"}");
+        testing::assert_eq(verified.key_id(), algorithm.to_string());
+        testing::assert_eq(
+            testing::expect_err(
+                jwt::sign_json(key, "{\"exp\":200}", SignOptions::new()),
+                "public signing",
+            ).kind,
+            ErrorKind::Key,
+        );
+    }
+}
+
+#[test]
+fn public_jwks_preserves_order_and_verifies_mixed_algorithm_rotation() -> () {
+    let document = "{\"keys\":[";
+    let first = true;
+    for (_, input, _) in jwk_vectors() {
+        if !first {
+            document += ",";
+        }
+        document += input;
+        first = false;
+    }
+    document += "]}";
+    let keys = testing::expect_ok(
+        jwt::public_jwks(
+            document,
+            Vec::from_array([Algorithm::EdDSA, Algorithm::RS256, Algorithm::ES256]),
+        ),
+        "mixed JWK set",
+    );
+    testing::assert_eq(keys.len(), 3);
+    testing::assert_eq(keys[0].algorithm(), "RS256");
+    testing::assert_eq(keys[1].algorithm(), "ES256");
+    testing::assert_eq(keys[2].algorithm(), "EdDSA");
+    for (algorithm, _, token) in jwk_vectors() {
+        let policy = Validation { now: Option::Some(100), ..Validation::new(algorithm) };
+        testing::assert_eq(
+            testing::expect_ok(jwt::verify(token, keys, policy), "rotation").key_id(),
+            algorithm.to_string(),
+        );
+    }
+    testing::assert_eq(
+        testing::expect_err(
+            jwt::public_jwks(document, Vec::from_array([Algorithm::EdDSA])),
+            "disallowed member",
+        ).kind,
+        ErrorKind::Algorithm,
+    );
+}
+
+fn ed_jwk(extra: string) -> string {
+    "{\"kty\":\"OKP\",\"crv\":\"Ed25519\",\"x\":\"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo\""
+        + extra
+        + "}"
+}
+
+#[test]
+fn public_jwk_rejects_conflicting_policy_private_material_and_bad_encoding() -> () {
+    for extra in[
+        ",\"use\":\"enc\"",
+        ",\"use\":null",
+        ",\"key_ops\":[\"sign\"]",
+        ",\"key_ops\":[\"verify\",\"verify\"]",
+        ",\"key_ops\":[\"sign\",\"verify\"]",
+        ",\"key_ops\":[]",
+        ",\"kid\":null",
+        ",\"kid\":\"\"",
+        ",\"d\":null",
+        ",\"p\":null",
+        ",\"q\":null",
+        ",\"dp\":null",
+        ",\"dq\":null",
+        ",\"qi\":null",
+        ",\"oth\":null",
+        ",\"k\":null",
+        ",\"n\":null",
+        ",\"y\":null",
+    ] {
+        testing::assert_eq(
+            testing::expect_err(
+                Key::public_jwk(Algorithm::EdDSA, ed_jwk(extra)),
+                "invalid public key",
+            ).kind,
+            ErrorKind::Key,
+        );
+    }
+    testing::assert_eq(
+        testing::expect_err(
+            Key::public_jwk(Algorithm::EdDSA, ed_jwk(",\"alg\":\"HS256\"")),
+            "conflicting alg",
+        ).kind,
+        ErrorKind::Algorithm,
+    );
+    testing::assert_eq(
+        testing::expect_err(Key::public_jwk(Algorithm::HS256, ed_jwk("")), "symmetric policy").kind,
+        ErrorKind::Algorithm,
+    );
+    for input in[
+        "{\"kty\":\"OKP\",\"crv\":\"Ed25519\",\"x\":\"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURp\"}",
+        "{\"kty\":\"OKP\",\"crv\":\"Ed25519\",\"x\":\"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo=\"}",
+        "{\"kty\":\"OKP\",\"crv\":\"X25519\",\"x\":\"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo\"}",
+        "{\"kty\":\"OKP\",\"crv\":\"Ed25519\"}",
+    ] {
+        testing::assert_eq(
+            testing::expect_err(Key::public_jwk(Algorithm::EdDSA, input), "invalid key parameters").kind,
+            ErrorKind::Key,
+        );
+    }
+    testing::assert_ok(
+        Key::public_jwk(
+            Algorithm::EdDSA,
+            ed_jwk(",\"use\":\"sig\",\"key_ops\":[\"verify\"],\"x5u\":\"https://unused.invalid\""),
+        ),
+    );
+}
+
+#[test]
+fn public_jwk_and_jwks_reject_duplicate_members_and_ambiguous_ids() -> () {
+    for extra in[",\"kty\":\"OKP\"", ",\"\\u006bty\":\"OKP\"", ",\"extra\":{\"a\":1,\"\\u0061\":2}"] {
+        testing::assert_eq(
+            testing::expect_err(
+                Key::public_jwk(Algorithm::EdDSA, ed_jwk(extra)),
+                "duplicate member",
+            ).kind,
+            ErrorKind::Json,
+        );
+    }
+    let key = ed_jwk(",\"kid\":\"active\"");
+    for document in[
+        "{\"keys\":[" + key + "," + key + "]}",
+        "{\"keys\":[" + ed_jwk("") + "]}",
+        "{\"keys\":[" + key + ",null]}",
+    ] {
+        testing::assert_eq(
+            testing::expect_err(
+                jwt::public_jwks(document, Vec::from_array([Algorithm::EdDSA])),
+                "invalid set",
+            ).kind,
+            ErrorKind::Key,
+        );
+    }
+    testing::assert_eq(
+        testing::expect_err(
+            jwt::public_jwks("{\"keys\":[],\"\\u006beys\":[]}", Vec::from_array([Algorithm::EdDSA])),
+            "duplicate set member",
+        ).kind,
+        ErrorKind::Json,
+    );
+    testing::assert_eq(
+        testing::expect_err(
+            jwt::public_jwks("{\"keys\":[]}", Vec::from_array([Algorithm::EdDSA])),
+            "empty set",
+        ).kind,
+        ErrorKind::Limit,
+    );
+    testing::assert_eq(
+        testing::expect_err(
+            jwt::public_jwks(
+                "{\"keys\":[" + key + "]}",
+                Vec::from_array([Algorithm::EdDSA, Algorithm::EdDSA]),
+            ),
+            "duplicate allowlist",
+        ).kind,
+        ErrorKind::Algorithm,
+    );
+}
+
+#[test]
+fn public_jwks_enforces_the_64_key_bound() -> () {
+    let document = "{\"keys\":[";
+    let i = 0;
+    while i < 64 {
+        if i > 0 {
+            document += ",";
+        }
+        document += ed_jwk(",\"kid\":\"" + i.to_string() + "\"");
+        i += 1;
+    }
+    let keys = testing::expect_ok(
+        jwt::public_jwks(document + "]}", Vec::from_array([Algorithm::EdDSA])),
+        "maximum set",
+    );
+    testing::assert_eq(keys.len(), 64);
+    testing::assert_eq(keys[63].key_id(), "63");
+    testing::assert_eq(
+        testing::expect_err(
+            jwt::public_jwks(
+                document + "," + ed_jwk(",\"kid\":\"64\"") + "]}",
+                Vec::from_array([Algorithm::EdDSA]),
+            ),
+            "oversized set",
+        ).kind,
+        ErrorKind::Limit,
+    );
+}
