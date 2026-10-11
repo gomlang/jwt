@@ -2,14 +2,14 @@
 
 `ecosystem::jwt` signs and verifies compact JSON Web Tokens with an explicit verification policy. It supports HS256, RS256, ES256 and EdDSA with Ed25519, typed `std::serde` claims, dynamic JSON claims, local key rotation, bounded parsing and injectable time.
 
-GoML 0.1.57 or newer and Go 1.26 are required. Cryptographic operations, PEM decoding, strict JSON scanning and NumericDate comparison use the bundled Go adapter and Go's standard library. There are no third-party Go dependencies and no cgo dependency. Consumers using native dependencies need a minimal `go.mod`; `goml verify` exercises this from an independent consumer module.
+Requires the [current GoML toolchain](https://github.com/gomlang/verification/blob/main/ci/toolchain.json) with unversioned registry support. Go 1.26 is required. Cryptographic operations, PEM decoding, strict JSON scanning and NumericDate comparison use the bundled Go adapter and Go's standard library. There are no third-party Go dependencies and no cgo dependency. Consumers using native dependencies need a minimal `go.mod`; the ecosystem verifier exercises the example consumer.
 
 ```toml
 [dependencies]
-"ecosystem::jwt" = "0.1.0"
+"ecosystem::jwt" = true
 ```
 
-This is a source repository; the dependency version above is a registry coordinate, not a claim that an immutable registry release has been published. For a local checkout use `goml add ecosystem::jwt --path ../jwt`.
+The unversioned dependency tracks the package repository’s default branch. For a local checkout use `goml add ecosystem::jwt --path ../jwt`.
 
 ## Example
 
@@ -113,7 +113,7 @@ This release supports compact signed JWTs and local public JWK/JWKS import. It d
 goml bind-go bindings.json
 goml fmt --check
 goml test
-goml verify
+(cd ../verification && just ecosystem-test jwt)
 go test -race ./...
 ```
 
