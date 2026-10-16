@@ -1,0 +1,720 @@
+package curves;
+
+use std::crypto::hash::{Sha256Digest, Sha512Digest};
+use std::crypto::rand;
+use std::hash::{Hasher};
+
+pub struct PointBytes {
+    pub x: Vec[u8],
+    pub y: Vec[u8],
+}
+
+struct Field {
+    modulus: Vec[u64],
+    factor: u64,
+    r2: Vec[u64],
+    one: Vec[u64],
+}
+
+struct Point {
+    x: Vec[u64],
+    y: Vec[u64],
+    z: Vec[u64],
+}
+
+struct Edwards {
+    x: Vec[u64],
+    y: Vec[u64],
+    z: Vec[u64],
+    t: Vec[u64],
+}
+
+fn zero() -> Vec[u64] {
+    Vec::from_array([0, 0, 0, 0, 0, 0, 0, 0])
+}
+
+fn one() -> Vec[u64] {
+    Vec::from_array([1, 0, 0, 0, 0, 0, 0, 0])
+}
+
+fn choose(left: Vec[u64], right: Vec[u64], bit: u64) -> Vec[u64] {
+    let mask = bit * 4294967295;
+    let output = zero();
+    for index in 0..8 {
+        output[index] = left[index] ^ ((left[index] ^ right[index]) & mask);
+    }
+    output
+}
+
+fn subtract(left: Vec[u64], right: Vec[u64]) -> (Vec[u64], u64) {
+    let output = zero();
+    let mut borrow: u64 = 0;
+    for index in 0..8 {
+        let value = left[index] + 4294967296 - right[index] - borrow;
+        output[index] = value & 4294967295;
+        borrow = 1 - (value >> 32);
+    };
+    (output, borrow)
+}
+
+fn equal(left: Vec[u64], right: Vec[u64]) -> bool {
+    let mut difference: u64 = 0;
+    for index in 0..8 {
+        difference = difference | (left[index] ^ right[index]);
+    }
+    difference == 0
+}
+
+fn smaller(left: Vec[u64], right: Vec[u64]) -> bool {
+    subtract(left, right).1 == 1
+}
+
+fn number(bytes: Vec[u8], little: bool) -> Vec[u64] {
+    let output = zero();
+    for index in 0..bytes.len() {
+        let source = if little {
+            index
+        } else {
+            bytes.len() - 1 - index
+        };
+        output[index / 4] = output[index / 4] | (bytes[source].to_u64() << ((index % 4) * 8));
+    }
+    output
+}
+
+fn encoded(value: Vec[u64], little: bool) -> Vec[u8] {
+    let output: Vec[u8] = Vec::with_capacity(32);
+    for index in 0..32 {
+        let source = if little {
+            index
+        } else {
+            31 - index
+        };
+        output.push((value[source / 4] >> ((source % 4) * 8)).to_u8());
+    }
+    output
+}
+
+fn portion(value: Vec[u8], start: isize, end: isize) -> Vec[u8] {
+    let output = Vec::with_capacity(end - start);
+    for index in start..end {
+        output.push(value[index]);
+    }
+    output
+}
+
+impl Field {
+    fn add(self: Field, left: Vec[u64], right: Vec[u64]) -> Vec[u64] {
+        let output = zero();
+        let mut carry: u64 = 0;
+        for index in 0..8 {
+            let value = left[index] + right[index] + carry;
+            output[index] = value & 4294967295;
+            carry = value >> 32;
+        }
+        let (reduced, borrow) = subtract(output, self.modulus);
+        choose(output, reduced, carry | (1 - borrow))
+    }
+
+    fn sub(self: Field, left: Vec[u64], right: Vec[u64]) -> Vec[u64] {
+        let (output, borrow) = subtract(left, right);
+        let mut carry: u64 = 0;
+        for index in 0..8 {
+            let value = output[index] + self.modulus[index] * borrow + carry;
+            output[index] = value & 4294967295;
+            carry = value >> 32;
+        }
+        output
+    }
+
+    fn mul(self: Field, left: Vec[u64], right: Vec[u64]) -> Vec[u64] {
+        let temporary: Vec[u64] = Vec::from_array([0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        for index in 0..8 {
+            let mut carry: u64 = 0;
+            for position in 0..8 {
+                let value = left[position] * right[index] + temporary[position] + carry;
+                temporary[position] = value & 4294967295;
+                carry = value >> 32;
+            }
+            temporary[8] = temporary[8] + carry;
+            let multiplier = (temporary[0] * self.factor) & 4294967295;
+            carry = 0;
+            for position in 0..8 {
+                let value = multiplier * self.modulus[position] + temporary[position] + carry;
+                if position > 0 {
+                    temporary[position - 1] = value & 4294967295;
+                }
+                carry = value >> 32;
+            }
+            let value = temporary[8] + carry;
+            temporary[7] = value & 4294967295;
+            temporary[8] = value >> 32;
+        }
+        let output = zero();
+        for index in 0..8 {
+            output[index] = temporary[index];
+        }
+        let (reduced, borrow) = subtract(output, self.modulus);
+        choose(output, reduced, temporary[8] | (1 - borrow))
+    }
+
+    fn import(self: Field, value: Vec[u64]) -> Vec[u64] {
+        self.mul(value, self.r2)
+    }
+
+    fn export(self: Field, value: Vec[u64]) -> Vec[u64] {
+        self.mul(value, one())
+    }
+
+    fn pow(self: Field, value: Vec[u64], exponent: Vec[u64]) -> Vec[u64] {
+        let mut result = self.one;
+        for step in 0..256 {
+            let index = 255 - step;
+            let squared = self.mul(result, result);
+            let multiplied = self.mul(squared, value);
+            let bit = (exponent[index / 32] >> (index % 32)) & 1;
+            result = choose(squared, multiplied, bit);
+        }
+        result
+    }
+
+    fn inverse(self: Field, value: Vec[u64]) -> Vec[u64] {
+        self.pow(value, subtract(self.modulus, Vec::from_array([2, 0, 0, 0, 0, 0, 0, 0])).0)
+    }
+
+    fn reduce(self: Field, value: Vec[u8], little: bool) -> Vec[u64] {
+        let mut result = zero();
+        for index in 0..value.len() {
+            let position = if little {
+                value.len() - index - 1
+            } else {
+                index
+            };
+            for offset in 0..8 {
+                result = self.add(result, result);
+                let digit = zero();
+                digit[0] = (value[position].to_u64() >> (7 - offset)) & 1;
+                result = self.add(result, digit);
+            }
+        }
+        result
+    }
+}
+
+fn p256_base(field: Field) -> Point {
+    Point { x: field.import(p256_x()), y: field.import(p256_y()), z: field.one }
+}
+
+fn point_add(field: Field, b: Vec[u64], left: Point, right: Point) -> Point {
+    let mut t0 = field.mul(left.x, right.x);
+    let mut t1 = field.mul(left.y, right.y);
+    let mut t2 = field.mul(left.z, right.z);
+    let t3 = field.sub(
+        field.mul(field.add(left.x, left.y), field.add(right.x, right.y)),
+        field.add(t0, t1),
+    );
+    let t4 = field.sub(
+        field.mul(field.add(left.y, left.z), field.add(right.y, right.z)),
+        field.add(t1, t2),
+    );
+    let mut y3 = field.sub(
+        field.mul(field.add(left.x, left.z), field.add(right.x, right.z)),
+        field.add(t0, t2),
+    );
+    let mut z3 = field.mul(b, t2);
+    let mut x3 = field.sub(y3, z3);
+    x3 = field.add(x3, field.add(x3, x3));
+    z3 = field.sub(t1, x3);
+    x3 = field.add(t1, x3);
+    y3 = field.mul(b, y3);
+    t2 = field.add(t2, field.add(t2, t2));
+    y3 = field.sub(field.sub(y3, t2), t0);
+    y3 = field.add(y3, field.add(y3, y3));
+    t0 = field.sub(field.add(t0, field.add(t0, t0)), t2);
+    t1 = field.mul(t4, y3);
+    t2 = field.mul(t0, y3);
+    y3 = field.add(field.mul(x3, z3), t2);
+    x3 = field.sub(field.mul(t3, x3), t1);
+    z3 = field.add(field.mul(t4, z3), field.mul(t3, t0));
+    Point { x: x3, y: y3, z: z3 }
+}
+
+fn point_choose(left: Point, right: Point, bit: u64) -> Point {
+    Point {
+        x: choose(left.x, right.x, bit),
+        y: choose(left.y, right.y, bit),
+        z: choose(left.z, right.z, bit),
+    }
+}
+
+fn point_mul(field: Field, point: Point, scalar: Vec[u64]) -> Point {
+    let b = field.import(p256_b());
+    let mut result = Point { x: zero(), y: field.one, z: zero() };
+    for step in 0..256 {
+        let index = 255 - step;
+        let doubled = point_add(field, b, result, result);
+        let added = point_add(field, b, doubled, point);
+        let bit = (scalar[index / 32] >> (index % 32)) & 1;
+        result = point_choose(doubled, added, bit);
+    }
+    result
+}
+
+fn point_bytes(field: Field, point: Point) -> PointBytes {
+    let inverse = field.inverse(point.z);
+    PointBytes {
+        x: encoded(field.export(field.mul(point.x, inverse)), false),
+        y: encoded(field.export(field.mul(point.y, inverse)), false),
+    }
+}
+
+pub fn valid_p256(x: Vec[u8], y: Vec[u8]) -> bool {
+    if x.len() != 32 || y.len() != 32 {
+        return false
+    }
+    let field = p256_field();
+    let x = number(x, false);
+    let y = number(y, false);
+    if !smaller(x, field.modulus) || !smaller(y, field.modulus) {
+        return false
+    }
+    let x = field.import(x);
+    let y = field.import(y);
+    let cubic = field.mul(field.mul(x, x), x);
+    let triple = field.add(x, field.add(x, x));
+    equal(field.mul(y, y), field.add(field.sub(cubic, triple), field.import(p256_b())))
+}
+
+fn private_p256(value: Vec[u8]) -> Result[Vec[u64], string] {
+    if value.is_empty() || value.len() > 32 {
+        return Result::Err("invalid P-256 private key")
+    }
+    let scalar = number(value, false);
+    if equal(scalar, zero()) || !smaller(scalar, p256_order().modulus) {
+        Result::Err("invalid P-256 private key")
+    } else {
+        Result::Ok(scalar)
+    }
+}
+
+pub fn p256_public(d: Vec[u8]) -> Result[PointBytes, string] {
+    let scalar = private_p256(d)?;
+    let field = p256_field();
+    Result::Ok(point_bytes(field, point_mul(field, p256_base(field), scalar)))
+}
+
+pub fn p256_sign(d: Vec[u8], message: Vec[u8]) -> Result[Vec[u8], string] {
+    let scalar = private_p256(d)?;
+    let order = p256_order();
+    let private = order.import(scalar);
+    let digest = Sha256Digest::new256();
+    digest.update(message.as_slice());
+    let hashed = order.import(order.reduce(digest.sum().to_vec(), false));
+    let field = p256_field();
+    for _ in 0..128 {
+        let random = rand::bytes(32).map_err(|_| "P-256 entropy unavailable")?.to_vec();
+        let nonce = number(random, false);
+        if equal(nonce, zero()) || !smaller(nonce, order.modulus) {
+            continue
+        }
+        let point = point_bytes(field, point_mul(field, p256_base(field), nonce));
+        let r = order.reduce(point.x, false);
+        let k = order.import(nonce);
+        let s = order.export(
+            order.mul(order.inverse(k), order.add(hashed, order.mul(order.import(r), private))),
+        );
+        if equal(r, zero()) || equal(s, zero()) {
+            continue
+        }
+        let signature = encoded(r, false);
+        for item in encoded(s, false).iter() {
+            signature.push(item);
+        }
+        return Result::Ok(signature)
+    }
+    Result::Err("P-256 signing failed")
+}
+
+pub fn p256_verify(x: Vec[u8], y: Vec[u8], message: Vec[u8], signature: Vec[u8]) -> bool {
+    if signature.len() != 64 || !valid_p256(x, y) {
+        return false
+    }
+    let order = p256_order();
+    let r = number(portion(signature, 0, 32), false);
+    let s = number(portion(signature, 32, 64), false);
+    if equal(r, zero()) || equal(s, zero()) || !smaller(r, order.modulus)
+        || !smaller(s, order.modulus) {
+        return false
+    }
+    let digest = Sha256Digest::new256();
+    digest.update(message.as_slice());
+    let hashed = order.import(order.reduce(digest.sum().to_vec(), false));
+    let inverse = order.inverse(order.import(s));
+    let u1 = order.export(order.mul(hashed, inverse));
+    let u2 = order.export(order.mul(order.import(r), inverse));
+    let field = p256_field();
+    let public = Point {
+        x: field.import(number(x, false)),
+        y: field.import(number(y, false)),
+        z: field.one,
+    };
+    let point = point_add(
+        field,
+        field.import(p256_b()),
+        point_mul(field, p256_base(field), u1),
+        point_mul(field, public, u2),
+    );
+    if equal(point.z, zero()) {
+        return false
+    }
+    equal(order.reduce(point_bytes(field, point).x, false), r)
+}
+
+fn edwards_base(field: Field) -> Edwards {
+    let x = field.import(edwards_x());
+    let y = field.import(edwards_y());
+    Edwards { x, y, z: field.one, t: field.mul(x, y) }
+}
+
+fn edwards_add(field: Field, d2: Vec[u64], left: Edwards, right: Edwards) -> Edwards {
+    let a = field.mul(field.sub(left.y, left.x), field.sub(right.y, right.x));
+    let b = field.mul(field.add(left.y, left.x), field.add(right.y, right.x));
+    let c = field.mul(field.mul(left.t, right.t), d2);
+    let product = field.mul(left.z, right.z);
+    let d = field.add(product, product);
+    let e = field.sub(b, a);
+    let f = field.sub(d, c);
+    let g = field.add(d, c);
+    let h = field.add(b, a);
+    Edwards { x: field.mul(e, f), y: field.mul(g, h), z: field.mul(f, g), t: field.mul(e, h) }
+}
+
+fn edwards_choose(left: Edwards, right: Edwards, bit: u64) -> Edwards {
+    Edwards {
+        x: choose(left.x, right.x, bit),
+        y: choose(left.y, right.y, bit),
+        z: choose(left.z, right.z, bit),
+        t: choose(left.t, right.t, bit),
+    }
+}
+
+fn edwards_mul(field: Field, point: Edwards, scalar: Vec[u64]) -> Edwards {
+    let d = field.import(edwards_d());
+    let d2 = field.add(d, d);
+    let mut result = Edwards { x: zero(), y: field.one, z: field.one, t: zero() };
+    for step in 0..256 {
+        let index = 255 - step;
+        let doubled = edwards_add(field, d2, result, result);
+        let added = edwards_add(field, d2, doubled, point);
+        let bit = (scalar[index / 32] >> (index % 32)) & 1;
+        result = edwards_choose(doubled, added, bit);
+    }
+    result
+}
+
+fn edwards_encode(field: Field, point: Edwards) -> Vec[u8] {
+    let inverse = field.inverse(point.z);
+    let x = field.export(field.mul(point.x, inverse));
+    let output = encoded(field.export(field.mul(point.y, inverse)), true);
+    output[31] = output[31] | ((x[0] & 1) << 7).to_u8();
+    output
+}
+
+fn edwards_decode(field: Field, input: Vec[u8]) -> Option[Edwards] {
+    let bytes = portion(input, 0, 32);
+    let sign = (bytes[31] >> 7).to_u64();
+    bytes[31] = bytes[31] & 127;
+    let y = field.import(field.reduce(bytes, true));
+    let squared = field.mul(y, y);
+    let numerator = field.sub(squared, field.one);
+    let denominator = field.add(field.mul(field.import(edwards_d()), squared), field.one);
+    let square = field.mul(numerator, field.inverse(denominator));
+    let mut x = field.pow(square, edwards_sqrt_exponent());
+    if !equal(field.mul(x, x), square) {
+        x = field.mul(x, field.import(edwards_sqrt_minus_one()));
+    }
+    if !equal(field.mul(x, x), square) {
+        return Option::None
+    }
+    let bit = (field.export(x)[0] & 1) ^ sign;
+    x = choose(x, field.sub(zero(), x), bit);
+    Option::Some(Edwards { x, y, z: field.one, t: field.mul(x, y) })
+}
+
+fn expanded_seed(seed: Vec[u8]) -> Result[Vec[u8], string] {
+    if seed.len() != 32 {
+        return Result::Err("invalid Ed25519 seed")
+    }
+    let digest = Sha512Digest::new512();
+    digest.update(seed.as_slice());
+    let expanded = digest.sum().to_vec();
+    expanded[0] = expanded[0] & 248;
+    expanded[31] = (expanded[31] & 63) | 64;
+    Result::Ok(expanded)
+}
+
+pub fn ed25519_public(seed: Vec[u8]) -> Result[Vec[u8], string] {
+    let expanded = expanded_seed(seed)?;
+    let scalar = number(portion(expanded, 0, 32), true);
+    let field = edwards_field();
+    Result::Ok(edwards_encode(field, edwards_mul(field, edwards_base(field), scalar)))
+}
+
+pub fn ed25519_sign(seed: Vec[u8], message: Vec[u8]) -> Result[Vec[u8], string] {
+    let expanded = expanded_seed(seed)?;
+    let scalar = number(portion(expanded, 0, 32), true);
+    let field = edwards_field();
+    let public = edwards_encode(field, edwards_mul(field, edwards_base(field), scalar));
+    let order = edwards_order();
+    let nonce_hash = Sha512Digest::new512();
+    nonce_hash.update(portion(expanded, 32, 64).as_slice());
+    nonce_hash.update(message.as_slice());
+    let nonce = order.reduce(nonce_hash.sum().to_vec(), true);
+    let signature = edwards_encode(field, edwards_mul(field, edwards_base(field), nonce));
+    let challenge_hash = Sha512Digest::new512();
+    challenge_hash.update(signature.as_slice());
+    challenge_hash.update(public.as_slice());
+    challenge_hash.update(message.as_slice());
+    let challenge = order.import(order.reduce(challenge_hash.sum().to_vec(), true));
+    let private = order.import(order.reduce(portion(expanded, 0, 32), true));
+    let s = order.export(order.add(order.import(nonce), order.mul(challenge, private)));
+    for item in encoded(s, true).iter() {
+        signature.push(item);
+    }
+    Result::Ok(signature)
+}
+
+pub fn ed25519_verify(public: Vec[u8], message: Vec[u8], signature: Vec[u8]) -> bool {
+    if public.len() != 32 || signature.len() != 64 || (signature[63] & 224) != 0 {
+        return false
+    }
+    let order = edwards_order();
+    let scalar = number(portion(signature, 32, 64), true);
+    if !smaller(scalar, order.modulus) {
+        return false
+    }
+    let field = edwards_field();
+    let point = match edwards_decode(field, public) {
+        Some(value) => value,
+        None => return false,
+    };
+    let digest = Sha512Digest::new512();
+    digest.update(portion(signature, 0, 32).as_slice());
+    digest.update(public.as_slice());
+    digest.update(message.as_slice());
+    let challenge = order.reduce(digest.sum().to_vec(), true);
+    let negative = Edwards {
+        x: field.sub(zero(), point.x),
+        y: point.y,
+        z: point.z,
+        t: field.sub(zero(), point.t),
+    };
+    let d = field.import(edwards_d());
+    let result = edwards_add(
+        field,
+        field.add(d, d),
+        edwards_mul(field, edwards_base(field), scalar),
+        edwards_mul(field, negative, challenge),
+    );
+    let computed = edwards_encode(field, result);
+    let mut difference: u8 = 0;
+    for index in 0..32 {
+        difference = difference | (computed[index] ^ signature[index]);
+    }
+    difference == 0
+}
+
+fn p256_field() -> Field {
+    Field {
+        modulus: Vec::from_array([4294967295, 4294967295, 4294967295, 0, 0, 0, 1, 4294967295]),
+        factor: 1,
+        r2: Vec::from_array([3, 0, 4294967295, 4294967291, 4294967294, 4294967295, 4294967293, 4]),
+        one: Vec::from_array([1, 0, 0, 4294967295, 4294967295, 4294967295, 4294967294, 0]),
+    }
+}
+
+fn p256_order() -> Field {
+    Field {
+        modulus: Vec::from_array(
+            [4234356049, 4089039554, 2803342980, 3169254061, 4294967295, 4294967295, 0, 4294967295],
+        ),
+        factor: 3993025615,
+        r2: Vec::from_array(
+            [
+                3195661986,
+                2200194197,
+                1237151654,
+                1184463260,
+                728493145,
+                675656249,
+                4091106848,
+                1726033300,
+            ],
+        ),
+        one: Vec::from_array([60611247, 205927741, 1491624315, 1125713234, 0, 0, 4294967295, 0]),
+    }
+}
+
+fn edwards_field() -> Field {
+    Field {
+        modulus: Vec::from_array(
+            [
+                4294967277,
+                4294967295,
+                4294967295,
+                4294967295,
+                4294967295,
+                4294967295,
+                4294967295,
+                2147483647,
+            ],
+        ),
+        factor: 678152731,
+        r2: Vec::from_array([1444, 0, 0, 0, 0, 0, 0, 0]),
+        one: Vec::from_array([38, 0, 0, 0, 0, 0, 0, 0]),
+    }
+}
+
+fn edwards_order() -> Field {
+    Field {
+        modulus: Vec::from_array(
+            [1559614445, 1477600026, 2734136534, 350157278, 0, 0, 0, 268435456],
+        ),
+        factor: 307527195,
+        r2: Vec::from_array(
+            [
+                1151078145,
+                2751861219,
+                1753584455,
+                3490585511,
+                401981029,
+                3471602642,
+                2083559997,
+                60375323,
+            ],
+        ),
+        one: Vec::from_array(
+            [
+                2375587101,
+                3605803380,
+                1937624944,
+                3337575412,
+                4294967294,
+                4294967295,
+                4294967295,
+                268435455,
+            ],
+        ),
+    }
+}
+
+fn p256_b() -> Vec[u64] {
+    Vec::from_array(
+        [
+            668098635,
+            1003371582,
+            3428036854,
+            1696401072,
+            1989707452,
+            3018571093,
+            2855965671,
+            1522939352,
+        ],
+    )
+}
+
+fn p256_x() -> Vec[u64] {
+    Vec::from_array(
+        [
+            3633889942,
+            4104206661,
+            770388896,
+            1996717441,
+            1671708914,
+            4173129445,
+            3777774151,
+            1796723186,
+        ],
+    )
+}
+
+fn p256_y() -> Vec[u64] {
+    Vec::from_array(
+        [
+            935285237,
+            3417718888,
+            1798397646,
+            734933847,
+            2081398294,
+            2397563722,
+            4263149467,
+            1340293858,
+        ],
+    )
+}
+
+fn edwards_d() -> Vec[u64] {
+    Vec::from_array(
+        [324630691, 1978355146, 1094834347, 7342669, 2004478104, 2361868409, 728759923, 1375956206],
+    )
+}
+
+fn edwards_x() -> Vec[u64] {
+    Vec::from_array(
+        [
+            2401621274,
+            3377868128,
+            2502272946,
+            1764542304,
+            4258716764,
+            3232031281,
+            3446559742,
+            560543443,
+        ],
+    )
+}
+
+fn edwards_y() -> Vec[u64] {
+    Vec::from_array(
+        [
+            1717986904,
+            1717986918,
+            1717986918,
+            1717986918,
+            1717986918,
+            1717986918,
+            1717986918,
+            1717986918,
+        ],
+    )
+}
+
+fn edwards_sqrt_exponent() -> Vec[u64] {
+    Vec::from_array(
+        [
+            4294967294,
+            4294967295,
+            4294967295,
+            4294967295,
+            4294967295,
+            4294967295,
+            4294967295,
+            268435455,
+        ],
+    )
+}
+
+fn edwards_sqrt_minus_one() -> Vec[u64] {
+    Vec::from_array(
+        [
+            1242472624,
+            3303938855,
+            2905597048,
+            792926214,
+            1039914919,
+            726466713,
+            1338105611,
+            730014848,
+        ],
+    )
+}

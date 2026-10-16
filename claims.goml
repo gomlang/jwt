@@ -1,0 +1,216 @@
+package jwt;
+
+use ecosystem::bigint::{BigInt, BigUint};
+use std::json;
+use std::utf8;
+
+fn failure(kind: ErrorKind, message: string) -> Error {
+    Error { kind, message }
+}
+
+fn strict_value(value: json::Value, depth: isize, count: Ref[isize]) -> Result[(), Error] {
+    count.set(count.get() + 1);
+    if depth > 64 || count.get() > 16384 {
+        return Result::Err(failure(ErrorKind::Json, "JSON complexity limit"))
+    }
+    match value {
+        json::Value::Object(entries) => {
+            let seen: HashMap[string, bool] = HashMap::new();
+            for (name, child) in entries {
+                if seen.get(name).is_some() {
+                    return Result::Err(failure(ErrorKind::Json, "duplicate JSON member"))
+                }
+                seen.set(name, true);
+                strict_value(child, depth + 1, count)?;
+            }
+        },
+        json::Value::Array(values) => for child in values {
+            strict_value(child, depth + 1, count)?;
+        },
+        _ => (),
+    }
+    Result::Ok(())
+}
+
+fn strict_object(input: string) -> Result[json::Value, Error] {
+    if input.byte_len() > 1048576 {
+        return Result::Err(failure(ErrorKind::Json, "JSON byte limit exceeded"))
+    }
+    if utf8::validate(input.to_bytes().as_slice()).is_err() {
+        return Result::Err(failure(ErrorKind::Json, "invalid JSON Unicode"))
+    }
+    let limits = json::DecodeLimits {
+        max_depth: 65,
+        max_input_bytes: input.byte_len() + 1,
+        max_number_bytes: 1048576,
+        ..decode_limits(),
+    };
+    let value = json::parse_with_limits(input, limits).map_err(
+        |_| failure(ErrorKind::Json, "malformed JSON or complexity limit"),
+    )?;
+    strict_value(value, 0, Ref::new(0))?;
+    match value {
+        json::Value::Object(_) => Result::Ok(value),
+        _ => Result::Err(failure(ErrorKind::Json, "expected JSON object")),
+    }
+}
+
+fn field_text(object: json::Value, name: string) -> Option[string] {
+    match json::field(object, name) {
+        Some(value) => json::as_string(value),
+        None => Option::None,
+    }
+}
+
+struct NumericDate {
+    coefficient: BigInt,
+    denominator: BigInt,
+}
+
+fn numeric_date(value: json::Value) -> Result[NumericDate, Error] {
+    let invalid = failure(ErrorKind::Claims, "invalid NumericDate");
+    let json::Value::Number(text) = value else {
+        return Result::Err(invalid)
+    };
+    if text.byte_len() > 64 {
+        return Result::Err(invalid)
+    }
+    let exponent_index = text.byte_len();
+    for i in 0..text.byte_len() {
+        if text.byte_get(i) == b'e' || text.byte_get(i) == b'E' {
+            exponent_index = i;
+            break
+        }
+    }
+    let exponent: i64 = 0;
+    if exponent_index < text.byte_len() {
+        exponent = BigInt::parse(text.byte_slice(exponent_index + 1, text.byte_len())).map_err(
+            |_| invalid,
+        )?.to_i64().ok_or(invalid)?;
+        if exponent < -100 || exponent > 100 {
+            return Result::Err(invalid)
+        }
+    }
+    let digits = "";
+    let fractional: i64 = 0;
+    let after_dot = false;
+    for i in 0..exponent_index {
+        if text.byte_get(i) == b'.' {
+            after_dot = true;
+        } else {
+            digits += text.byte_slice(i, i + 1);
+            if after_dot {
+                fractional += 1;
+            }
+        }
+    }
+    let coefficient = BigInt::parse(digits).map_err(|_| invalid)?;
+    let power = exponent - fractional;
+    let denominator = BigInt::one();
+    if power >= 0 {
+        coefficient = coefficient.mul(BigInt::pow10(power.to_u64()).map_err(|_| invalid)?);
+    } else {
+        denominator = BigInt::pow10((-power).to_u64()).map_err(|_| invalid)?;
+    }
+    let maximum = denominator.mul(BigInt::from_i64(253402300799));
+    if coefficient.abs().cmp(maximum.abs()) == Ordering::Greater {
+        return Result::Err(invalid)
+    }
+    Result::Ok(NumericDate { coefficient, denominator })
+}
+
+fn audience_values(value: json::Value) -> Result[Vec[string], Error] {
+    let invalid = failure(ErrorKind::Claims, "invalid audience");
+    match value {
+        json::Value::String(text) => Result::Ok(Vec::from_array([text])),
+        json::Value::Array(items) => {
+            if items.len() == 0 || items.len() > 128 {
+                return Result::Err(invalid)
+            }
+            let result = Vec::new();
+            for item in items {
+                result.push(json::as_string(item).ok_or(invalid)?);
+            }
+            Result::Ok(result)
+        },
+        _ => Result::Err(invalid),
+    }
+}
+
+fn validate_claim_types(claims: json::Value) -> Result[(), Error] {
+    for name in["iss", "sub", "jti"] {
+        if let Some(value) = json::field(claims, name) {
+            if json::as_string(value).is_none() {
+                return Result::Err(failure(ErrorKind::Claims, "expected string registered claim"))
+            }
+        }
+    }
+    for name in["exp", "nbf", "iat"] {
+        if let Some(value) = json::field(claims, name) {
+            let _ = numeric_date(value)?;
+        }
+    }
+    if let Some(value) = json::field(claims, "aud") {
+        let _ = audience_values(value)?;
+    }
+    Result::Ok(())
+}
+
+fn validate_claims(claims: json::Value, validation: Validation, now: i64) -> Result[(), Error] {
+    validate_claim_types(claims)?;
+    if let Some(value) = json::field(claims, "exp") {
+        let date = numeric_date(value)?;
+        if date.coefficient.cmp(
+            date.denominator.mul(BigInt::from_i64(now - validation.leeway_seconds)),
+        )
+            != Ordering::Greater {
+            return Result::Err(failure(ErrorKind::Expired, "token has expired"))
+        }
+    } else if validation.require_expiration {
+        return Result::Err(failure(ErrorKind::Claims, "expiration is required"))
+    }
+    for name in["nbf", "iat"] {
+        if name == "iat" && !validation.check_issued_at {
+            continue
+        }
+        if let Some(value) = json::field(claims, name) {
+            let date = numeric_date(value)?;
+            if date.coefficient.cmp(
+                date.denominator.mul(BigInt::from_i64(now + validation.leeway_seconds)),
+            )
+                == Ordering::Greater {
+                return Result::Err(
+                    if name == "nbf" {
+                        failure(ErrorKind::NotYetValid, "token not active")
+                    } else {
+                        failure(ErrorKind::IssuedAt, "token issued in future")
+                    },
+                )
+            }
+        }
+    }
+    if let Some(issuer) = validation.issuer {
+        if field_text(claims, "iss") != Option::Some(issuer) {
+            return Result::Err(failure(ErrorKind::Issuer, "issuer mismatch"))
+        }
+    }
+    if let Some(value) = json::field(claims, "aud") {
+        let matched = false;
+        for candidate in audience_values(value)? {
+            if validation.audience == Option::Some(candidate) {
+                matched = true;
+            }
+        }
+        if !matched {
+            return Result::Err(
+                failure(
+                    ErrorKind::Audience,
+                    "audience mismatch or expected audience not configured",
+                ),
+            )
+        }
+    } else if validation.audience.is_some() {
+        return Result::Err(failure(ErrorKind::Audience, "audience is required"))
+    }
+    Result::Ok(())
+}

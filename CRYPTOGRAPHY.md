@@ -1,0 +1,11 @@
+# Cryptographic implementation
+
+RSA implements RSASSA-PKCS1-v1_5 with SHA-256 and the exact DigestInfo prefix required by RFC 8017. Public keys are structurally validated for an odd 2048–8192-bit modulus and odd exponent 3–2147483647. Private key import verifies the factor product, pairwise coprimality, private-exponent congruences and supplied CRT parameters. Two-prime keys also retain Go’s minimum private-exponent size and prime-distance checks. The complete private exponent is retained in modulus-width bytes, including for multiprime keys.
+
+Signing uses fixed-size 32-bit Montgomery arithmetic, an exponentiation schedule of two multiplications and masked selection for every exponent bit, fresh RSA message blinding, and public verification of the resulting signature before returning it. Montgomery loops and allocation sizes depend on public modulus width. No branches or memory indices depend on private exponent bits. Failure to acquire entropy, invert a fresh blinding factor within the bounded retry count, or verify the computed signature returns an error.
+
+Arbitrary-precision arithmetic is used for public RSA verification, public context construction, key-import validation, exact decimal NumericDates, and operations on fresh random blinding factors with the public modulus. It is not used for private RSA exponentiation or secret elliptic-curve arithmetic. Imported immutable keys contain no mutable public API; signatures and hash states use call-local buffers.
+
+P-256 and Ed25519 source provenance, fixed-width arithmetic design and upstream BSD license are in `curves/NOTICE` and `curves/LICENSE-GO`. Key-envelope parsing follows the PKCS#1, PKCS#8, SEC1 and SubjectPublicKeyInfo formats and the supported Go standard-library key policies. DER framing comes from `ecosystem::asn1`; public integer arithmetic comes from `ecosystem::bigint`. The Go standard-library x509 and RSA implementations were consulted for compatibility; their license is preserved in `curves/LICENSE-GO`.
+
+These implementation properties are reviewed at source level and covered by independent reference and negative tests. They are not a claim of compiler-enforced constant time or an independent cryptographic security audit.

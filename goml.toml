@@ -1,5 +1,6 @@
 [module]
 path = "ecosystem::jwt"
 
-[native]
-go-module = "github.com/gomlang/jwt"
+[dependencies]
+"ecosystem::asn1" = true
+"ecosystem::bigint" = true

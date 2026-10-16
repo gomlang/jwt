@@ -1,0 +1,222 @@
+package jwt;
+
+use ecosystem::bigint::{BigUint};
+use std::crypto::rand;
+
+struct RsaKey {
+    modulus: BigUint,
+    exponent: BigUint,
+    private: Option[Vec[u8]],
+    montgomery: Montgomery,
+}
+
+struct Montgomery {
+    modulus: Vec[u64],
+    factor: u64,
+    r2: Vec[u64],
+    identity: Vec[u64],
+}
+
+fn zeros(length: isize) -> Vec[u64] {
+    let result = Vec::with_capacity(length);
+    for _ in 0..length {
+        result.push(0);
+    }
+    result
+}
+
+fn limbs(value: Vec[u8], length: isize) -> Vec[u64] {
+    let result = zeros(length);
+    for i in 0..value.len() {
+        result[i / 4] |= value[value.len() - i - 1].to_u64() << ((i % 4) * 8);
+    }
+    result
+}
+
+fn limb_bytes(value: Vec[u64], length: isize) -> Vec[u8] {
+    let result = Vec::with_capacity(length);
+    for i in 0..length {
+        let index = length - i - 1;
+        result.push((value[index / 4] >> ((index % 4) * 8)).to_u8());
+    }
+    result
+}
+
+fn choose_limbs(left: Vec[u64], right: Vec[u64], bit: u64) -> Vec[u64] {
+    let mask = bit * 4294967295;
+    let output = zeros(left.len());
+    for i in 0..left.len() {
+        output[i] = left[i] ^ ((left[i] ^ right[i]) & mask);
+    }
+    output
+}
+
+impl Montgomery {
+    fn new(modulus: BigUint) -> Result[Montgomery, Error] {
+        let length = (modulus.bits() + 31) / 32;
+        let words = limbs(modulus.to_bytes_be(), length);
+        let inverse: u64 = 1;
+        for _ in 0..5 {
+            inverse = (inverse * (4294967298 - ((words[0] * inverse) & 4294967295))) & 4294967295;
+        }
+        let r2 = BigUint::one().shl(length * 64).map_err(
+            |_| failure(ErrorKind::Key, "invalid RSA modulus"),
+        )?.rem(modulus).map_err(|_| failure(ErrorKind::Key, "invalid RSA modulus"))?;
+        let one = zeros(length);
+        one[0] = 1;
+        let context = Montgomery {
+            modulus: words,
+            factor: (4294967296 - inverse) & 4294967295,
+            r2: limbs(r2.to_bytes_be(), length),
+            identity: one,
+        };
+        Result::Ok(Montgomery { identity: context.mul(context.identity, context.r2), ..context })
+    }
+
+    fn mul(self: Montgomery, left: Vec[u64], right: Vec[u64]) -> Vec[u64] {
+        let length = self.modulus.len();
+        let scratch = zeros(length + 1);
+        for i in 0..length {
+            let carry: u64 = 0;
+            for j in 0..length {
+                let value = left[j] * right[i] + scratch[j] + carry;
+                scratch[j] = value & 4294967295;
+                carry = value >> 32;
+            }
+            scratch[length] += carry;
+            let multiplier = (scratch[0] * self.factor) & 4294967295;
+            carry = 0;
+            for j in 0..length {
+                let value = multiplier * self.modulus[j] + scratch[j] + carry;
+                if j > 0 {
+                    scratch[j - 1] = value & 4294967295;
+                }
+                carry = value >> 32;
+            }
+            let value = scratch[length] + carry;
+            scratch[length - 1] = value & 4294967295;
+            scratch[length] = value >> 32;
+        }
+        let output = zeros(length);
+        let reduced = zeros(length);
+        let borrow: u64 = 0;
+        for i in 0..length {
+            output[i] = scratch[i];
+            let value = output[i] + 4294967296 - self.modulus[i] - borrow;
+            reduced[i] = value & 4294967295;
+            borrow = 1 - (value >> 32);
+        }
+        choose_limbs(output, reduced, scratch[length] | (1 - borrow))
+    }
+
+    fn import(self: Montgomery, value: Vec[u8]) -> Vec[u64] {
+        self.mul(limbs(value, self.modulus.len()), self.r2)
+    }
+
+    fn export(self: Montgomery, value: Vec[u64], length: isize) -> Vec[u8] {
+        let one = zeros(self.modulus.len());
+        one[0] = 1;
+        limb_bytes(self.mul(value, one), length)
+    }
+
+    fn pow(self: Montgomery, value: Vec[u64], exponent: Vec[u8]) -> Vec[u64] {
+        let result = self.identity;
+        for byte in exponent {
+            for i in 0..8 {
+                let squared = self.mul(result, result);
+                let product = self.mul(squared, value);
+                result = choose_limbs(squared, product, (byte.to_u64() >> (7 - i)) & 1);
+            }
+        }
+        result
+    }
+}
+
+fn rsa_public(modulus: BigUint, exponent: BigUint) -> Result[RsaKey, Error] {
+    if modulus.bits() < 2048 || modulus.bits() > 8192 || !modulus.is_odd() || exponent.bits() > 31
+        || exponent.to_u64().unwrap_or(0) < 3
+        || !exponent.is_odd() {
+        return Result::Err(failure(ErrorKind::Key, "invalid RSA modulus or exponent"))
+    }
+    Result::Ok(
+        RsaKey { modulus, exponent, private: Option::None, montgomery: Montgomery::new(modulus)? },
+    )
+}
+
+fn padded_integer(value: BigUint, length: isize) -> Result[Vec[u8], Error] {
+    let data = value.to_bytes_be();
+    if data.len() > length {
+        return Result::Err(failure(ErrorKind::Key, "invalid key integer length"))
+    }
+    let result = Vec::with_capacity(length);
+    for _ in 0..(length - data.len()) {
+        result.push(0);
+    }
+    result.extend(data);
+    Result::Ok(result)
+}
+
+fn rsa_encoded(digest: Vec[u8], length: isize) -> Vec[u8] {
+    let output: Vec[u8] = Vec::from_array([0, 1]);
+    for _ in 0..(length - 54) {
+        output.push(255);
+    }
+    output.push(0);
+    output.extend(
+        Vec::from_array([48, 49, 48, 13, 6, 9, 96, 134, 72, 1, 101, 3, 4, 2, 1, 5, 0, 4, 32]),
+    );
+    output.extend(digest);
+    output
+}
+
+fn rsa_verify(key: RsaKey, digest: Vec[u8], signature: Vec[u8]) -> bool {
+    let length = (key.modulus.bits() + 7) / 8;
+    if signature.len() != length {
+        return false
+    }
+    let value = match natural(signature) {
+        Result::Ok(value) => value,
+        Result::Err(_) => return false,
+    };
+    if value.cmp(key.modulus) != Ordering::Less {
+        return false
+    }
+    let decoded = match value.modpow(key.exponent, key.modulus) {
+        Result::Ok(value) => value,
+        Result::Err(_) => return false,
+    };
+    match padded_integer(decoded, length) {
+        Result::Ok(encoded) => same_bytes(encoded, rsa_encoded(digest, length)),
+        Result::Err(_) => false,
+    }
+}
+
+fn rsa_sign(key: RsaKey, digest: Vec[u8]) -> Result[Vec[u8], Error] {
+    let exponent = key.private.ok_or(failure(ErrorKind::Key, "signing requires a private key"))?;
+    let failed = failure(ErrorKind::Signature, "RSA signing failed");
+    let length = (key.modulus.bits() + 7) / 8;
+    let context = key.montgomery;
+    let encoded = context.import(rsa_encoded(digest, length));
+    for _ in 0..128 {
+        let random = rand::bytes(length).map_err(|_| failed)?.to_vec();
+        let blind = natural(random)?.rem(key.modulus).map_err(|_| failed)?;
+        if blind.is_zero() {
+            continue
+        }
+        let inverse = blind.mod_inverse(key.modulus).map_err(|_| failed)?;
+        if let Some(inverse) = inverse {
+            let power = blind.modpow(key.exponent, key.modulus).map_err(|_| failed)?;
+            let blinded = context.mul(encoded, context.import(power.to_bytes_be()));
+            let signed = context.pow(blinded, exponent);
+            let result = context.export(
+                context.mul(signed, context.import(inverse.to_bytes_be())),
+                length,
+            );
+            if !rsa_verify(key, digest, result) {
+                return Result::Err(failed)
+            }
+            return Result::Ok(result)
+        }
+    }
+    Result::Err(failed)
+}

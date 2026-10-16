@@ -1,0 +1,168 @@
+package jwt;
+
+use std::bytes;
+use std::encoding::base64;
+use std::json;
+use std::time::{SystemTime};
+use std::utf8;
+
+fn valid_id(id: string) -> bool {
+    id.byte_len() <= 256 && !id.contains("\u0000") && !id.contains("\r") && !id.contains("\n")
+        && utf8::validate(id.to_bytes().as_slice()).is_ok()
+}
+
+fn encode_segment(input: Vec[u8]) -> string {
+    base64::encode_with(bytes::Bytes::from_vec(input), base64::Variant::UrlSafeNoPadding)
+}
+
+fn decode_segment(segment: string, limit: isize) -> Result[Vec[u8], Error] {
+    let invalid = failure(ErrorKind::Format, "invalid compact JWS base64url");
+    if segment.byte_len() == 0 || segment.byte_len() > limit || segment.byte_len() % 4 == 1 {
+        return Result::Err(invalid)
+    }
+    for ch in segment.to_bytes() {
+        if !(ch >= b'A' && ch <= b'Z' || ch >= b'a' && ch <= b'z' || ch >= b'0' && ch <= b'9'
+            || ch == b'-'
+            || ch == b'_') {
+            return Result::Err(invalid)
+        }
+    }
+    Result::Ok(
+        base64::decode_with(segment, base64::Variant::UrlSafeNoPadding).map_err(|_| invalid)?.to_vec(),
+    )
+}
+
+pub fn sign_json(key: Key, claims: string, options: SignOptions) -> Result[string, Error] {
+    if options.max_token_bytes < 256 || options.max_token_bytes > 1048576
+        || claims.byte_len() > options.max_token_bytes
+        || options.token_type == ""
+        || !valid_id(options.token_type) {
+        return Result::Err(failure(ErrorKind::Limit, "invalid signing limits or token type"))
+    }
+    validate_claim_types(strict_object(claims)?)?;
+    let fields = Vec::from_array([("alg", json::Value::String(key.algorithm()))]);
+    if key.key_id() != "" {
+        fields.push(("kid", json::Value::String(key.key_id())));
+    }
+    fields.push(("typ", json::Value::String(options.token_type)));
+    let input = encode_segment(json::encode(json::Value::Object(fields)).to_bytes()) + "."
+        + encode_segment(claims.to_bytes());
+    let signature = signature(key, input.to_bytes())?;
+    let token = input + "." + encode_segment(signature);
+    if token.byte_len() > options.max_token_bytes {
+        return Result::Err(failure(ErrorKind::Limit, "signed token exceeds configured limit"))
+    }
+    Result::Ok(token)
+}
+
+pub fn verify(token: string, keys: Vec[Key], validation: Validation) -> Result[Verified, Error] {
+    let now = validation.now.unwrap_or_else(|| SystemTime::now().unix_seconds());
+    if keys.len() == 0 || keys.len() > 64 || validation.algorithms.len() == 0
+        || validation.algorithms.len() > 4
+        || validation.max_token_bytes < 256
+        || validation.max_token_bytes > 1048576
+        || token.byte_len() > validation.max_token_bytes
+        || validation.leeway_seconds < 0
+        || validation.leeway_seconds > 86400
+        || now < -253402300799
+        || now > 253402300799
+        || validation.issuer.unwrap_or("").byte_len() > 4096
+        || validation.audience.unwrap_or("").byte_len() > 4096
+        || validation.token_type.byte_len() > 256 {
+        return Result::Err(
+            failure(ErrorKind::Limit, "invalid verification configuration or token size"),
+        )
+    }
+    if validation.issuer == Option::Some("") {
+        return Result::Err(failure(ErrorKind::Issuer, "configured issuer must be nonempty"))
+    }
+    if validation.audience == Option::Some("") {
+        return Result::Err(failure(ErrorKind::Audience, "configured audience must be nonempty"))
+    }
+    for i in 0..validation.algorithms.len() {
+        for j in 0..i {
+            if validation.algorithms[i] == validation.algorithms[j] {
+                return Result::Err(failure(ErrorKind::Algorithm, "invalid algorithm allowlist"))
+            }
+        }
+    }
+    let separators = 0;
+    for index in 0..token.byte_len() {
+        if token.byte_get(index) == b'.' {
+            separators += 1;
+            if separators > 2 {
+                return Result::Err(
+                    failure(ErrorKind::Format, "expected three compact JWS segments"),
+                )
+            }
+        }
+    }
+    if separators != 2 {
+        return Result::Err(failure(ErrorKind::Format, "expected three compact JWS segments"))
+    }
+    let parts = token.split(".");
+    if parts.len() != 3 {
+        return Result::Err(failure(ErrorKind::Format, "expected three compact JWS segments"))
+    }
+    let header_bytes = decode_segment(parts[0], 8192)?;
+    let (valid_header, header_text) = string_from_utf8(header_bytes);
+    if !valid_header {
+        return Result::Err(failure(ErrorKind::Json, "invalid JSON Unicode"))
+    }
+    let header = strict_object(header_text)?;
+    let algorithm = field_text(header, "alg").ok_or(
+        failure(ErrorKind::Algorithm, "disallowed token algorithm"),
+    )?;
+    let permitted = false;
+    for candidate in validation.algorithms {
+        if candidate.to_string() == algorithm {
+            permitted = true;
+        }
+    }
+    if !permitted {
+        return Result::Err(failure(ErrorKind::Algorithm, "disallowed token algorithm"))
+    }
+    for field in["crit", "b64", "jku", "jwk", "x5u", "x5c"] {
+        if json::field(header, field).is_some() {
+            return Result::Err(
+                failure(ErrorKind::Header, "unsupported JOSE extension or embedded key"),
+            )
+        }
+    }
+    let id = "";
+    if let Some(value) = json::field(header, "kid") {
+        id = json::as_string(value).ok_or(failure(ErrorKind::Header, "invalid key id"))?;
+        if id == "" || !valid_id(id) {
+            return Result::Err(failure(ErrorKind::Header, "invalid key id"))
+        }
+    }
+    if let Some(value) = json::field(header, "typ") {
+        let typ = json::as_string(value).ok_or(failure(ErrorKind::Header, "unexpected token type"))?;
+        if typ.byte_len() > 256 || validation.token_type != "" && typ != validation.token_type {
+            return Result::Err(failure(ErrorKind::Header, "unexpected token type"))
+        }
+    } else if validation.token_type != "" {
+        return Result::Err(failure(ErrorKind::Header, "missing token type"))
+    }
+    let selected: Option[Key] = Option::None;
+    for candidate in keys {
+        if candidate.algorithm() == algorithm && (id == "" || candidate.key_id() == id) {
+            if selected.is_some() {
+                return Result::Err(failure(ErrorKind::Key, "unknown or ambiguous key id"))
+            }
+            selected = Option::Some(candidate);
+        }
+    }
+    let key = selected.ok_or(failure(ErrorKind::Key, "unknown or ambiguous key id"))?;
+    let sig = decode_segment(parts[2], 2048)?;
+    if !verify_signature(key, (parts[0] + "." + parts[1]).to_bytes(), sig) {
+        return Result::Err(failure(ErrorKind::Signature, "signature verification failed"))
+    }
+    let payload = decode_segment(parts[1], validation.max_token_bytes)?;
+    let (valid_payload, claims_json) = string_from_utf8(payload);
+    if !valid_payload {
+        return Result::Err(failure(ErrorKind::Json, "invalid JSON Unicode"))
+    }
+    validate_claims(strict_object(claims_json)?, validation, now)?;
+    Result::Ok(Verified { claims_json, selected_key_id: key.key_id() })
+}

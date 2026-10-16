@@ -1,0 +1,15 @@
+The P-256 complete projective addition formulas and Ed25519 extended-coordinate
+formulas and verification behavior in curves.goml are adapted from the Go 1.25
+standard library sources crypto/internal/fips140/nistec/p256.go,
+crypto/internal/fips140/edwards25519/edwards25519.go, and
+crypto/internal/fips140/ed25519/ed25519.go. The Go license is in LICENSE-GO.
+
+P-256 uses the complete a = -3 formulas in Appendix A.2 of Renes, Costello,
+and Batina, Complete addition formulas for prime order elliptic curves (2015).
+Ed25519 implements the pure Ed25519 algorithm of RFC 8032, retaining Go
+crypto/ed25519 verification behavior for noncanonical public-point encodings.
+
+Field and scalar operations use fixed eight-limb Montgomery arithmetic. Scalar
+multiplication and inversion use fixed 256-round schedules and masked selection;
+P-256 nonces come from std::crypto::rand. These source-level properties do not
+provide a compiler-enforced or independently audited constant-time guarantee.

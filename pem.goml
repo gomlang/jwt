@@ -1,0 +1,298 @@
+package jwt;
+
+use module::curves;
+use ecosystem::asn1;
+use ecosystem::bigint::{BigUint};
+use std::encoding::pem;
+use std::text;
+
+fn der_error() -> Error {
+    failure(ErrorKind::Key, "invalid key encoding or algorithm")
+}
+
+fn der_limits() -> asn1::Limits {
+    asn1::Limits { max_bytes: 65536, max_depth: 16, max_elements: 2048, max_oid_arcs: 16 }
+}
+
+fn der_tlv(input: Vec[u8]) -> Result[asn1::Tlv, Error] {
+    asn1::validate_der(input.as_slice(), der_limits()).map_err(|_| der_error())?;
+    asn1::parse_tlv(input.as_slice(), der_limits()).map_err(|_| der_error())
+}
+
+fn der_fields(value: asn1::Tlv, tag: u8) -> Result[Vec[asn1::Tlv], Error] {
+    if value.tag != tag {
+        return Result::Err(der_error())
+    }
+    asn1::split_tlvs(value.content.as_slice(), der_limits()).map_err(|_| der_error())
+}
+
+fn der_unsigned(value: asn1::Tlv) -> Result[BigUint, Error] {
+    let data = value.content;
+    if value.tag != 2 || data.is_empty() || data[0] >= 128
+        || data.len() > 1 && data[0] == 0 && data[1] < 128 {
+        return Result::Err(der_error())
+    }
+    natural(data)
+}
+
+fn oid_is(value: asn1::Tlv, expected: Vec[u8]) -> bool {
+    value.tag == 6 && same_bytes(value.content, expected)
+}
+
+fn rsa_oid() -> Vec[u8] {
+    Vec::from_array([42, 134, 72, 134, 247, 13, 1, 1, 1])
+}
+
+fn ec_oid() -> Vec[u8] {
+    Vec::from_array([42, 134, 72, 206, 61, 2, 1])
+}
+
+fn p256_oid() -> Vec[u8] {
+    Vec::from_array([42, 134, 72, 206, 61, 3, 1, 7])
+}
+
+fn ed_oid() -> Vec[u8] {
+    Vec::from_array([43, 101, 112])
+}
+
+fn der_algorithm(value: asn1::Tlv, algorithm: Algorithm) -> Result[(), Error] {
+    let fields = der_fields(value, 48)?;
+    let valid = match algorithm {
+        Algorithm::RS256 => fields.len() == 2 && oid_is(fields[0], rsa_oid()) && fields[1].tag == 5
+            && fields[1].content.is_empty(),
+        Algorithm::ES256 => fields.len() == 2 && oid_is(fields[0], ec_oid())
+            && oid_is(fields[1], p256_oid()),
+        Algorithm::EdDSA => fields.len() == 1 && oid_is(fields[0], ed_oid()),
+        Algorithm::HS256 => false,
+    };
+    if valid {
+        Result::Ok(())
+    } else {
+        Result::Err(der_error())
+    }
+}
+
+fn rsa_der(input: Vec[u8], private: bool) -> Result[Material, Error] {
+    let fields = der_fields(der_tlv(input)?, 48)?;
+    if !private {
+        if fields.len() != 2 {
+            return Result::Err(der_error())
+        }
+        return Result::Ok(
+            Material::Rsa(rsa_public(der_unsigned(fields[0])?, der_unsigned(fields[1])?)?),
+        )
+    }
+    if fields.len() < 6 || fields.len() > 10 || der_unsigned(fields[0])?.to_u64().unwrap_or(2) > 1 {
+        return Result::Err(der_error())
+    }
+    let key = rsa_public(der_unsigned(fields[1])?, der_unsigned(fields[2])?)?;
+    let d = der_unsigned(fields[3])?;
+    if d.is_zero() || d.cmp(key.modulus) != Ordering::Less {
+        return Result::Err(der_error())
+    }
+    let primes = Vec::from_array([der_unsigned(fields[4])?, der_unsigned(fields[5])?]);
+    if fields.len() == 10 {
+        for additional in der_fields(fields[9], 48)? {
+            let values = der_fields(additional, 48)?;
+            if values.len() != 3 {
+                return Result::Err(der_error())
+            }
+            primes.push(der_unsigned(values[0])?);
+            let _ = der_unsigned(values[1])?;
+            let _ = der_unsigned(values[2])?;
+        }
+    }
+    let product = BigUint::one();
+    let de = d.mul(key.exponent);
+    for prime in primes {
+        if prime.is_zero() || prime.is_one() || !prime.is_odd() {
+            return Result::Err(der_error())
+        }
+        if !product.gcd(prime).is_one() {
+            return Result::Err(der_error())
+        }
+        product = product.mul(prime);
+        if product.bits() > 8192 {
+            return Result::Err(der_error())
+        }
+        let order = prime.sub(BigUint::one()).map_err(|_| der_error())?;
+        if !de.rem(order).map_err(|_| der_error())?.is_one() {
+            return Result::Err(der_error())
+        }
+    }
+    if product != key.modulus {
+        return Result::Err(der_error())
+    }
+    if primes.len() == 2 {
+        let distance = if primes[0].cmp(primes[1]) == Ordering::Greater {
+            primes[0].sub(primes[1]).map_err(|_| der_error())?
+        } else {
+            primes[1].sub(primes[0]).map_err(|_| der_error())?
+        };
+        if distance.bits() <= key.modulus.bits() / 2 - 100 || d.bits() <= key.modulus.bits() / 2 {
+            return Result::Err(der_error())
+        }
+    }
+    if fields.len() >= 7
+        && der_unsigned(fields[6])?
+            != d.rem(primes[0].sub(BigUint::one()).map_err(|_| der_error())?).map_err(
+                |_| der_error(),
+            )? {
+        return Result::Err(der_error())
+    }
+    if fields.len() >= 8
+        && der_unsigned(fields[7])?
+            != d.rem(primes[1].sub(BigUint::one()).map_err(|_| der_error())?).map_err(
+                |_| der_error(),
+            )? {
+        return Result::Err(der_error())
+    }
+    if fields.len() >= 9
+        && Option::Some(der_unsigned(fields[8])?)
+            != primes[1].mod_inverse(primes[0]).map_err(|_| der_error())? {
+        return Result::Err(der_error())
+    }
+    let private_bytes = padded_integer(d, (key.modulus.bits() + 7) / 8)?;
+    Result::Ok(Material::Rsa(RsaKey { private: Option::Some(private_bytes), ..key }))
+}
+
+fn ec_private(input: Vec[u8], outer_curve: bool) -> Result[Material, Error] {
+    let fields = der_fields(der_tlv(input)?, 48)?;
+    if fields.len() < 2 || fields.len() > 4 || !der_unsigned(fields[0])?.is_one()
+        || fields[1].tag != 4 {
+        return Result::Err(der_error())
+    }
+    let named = outer_curve;
+    let last_tag: u8 = 159;
+    for i in 2..fields.len() {
+        if fields[i].tag <= last_tag {
+            return Result::Err(der_error())
+        }
+        last_tag = fields[i].tag;
+        if fields[i].tag == 160 {
+            let oid = der_tlv(fields[i].content)?;
+            if !outer_curve && !oid_is(oid, p256_oid()) {
+                return Result::Err(der_error())
+            }
+            named = true;
+        } else if fields[i].tag == 161 {
+            let public = der_tlv(fields[i].content)?;
+            if public.tag != 3 || public.content.is_empty() || public.content[0] > 7 {
+                return Result::Err(der_error())
+            }
+        } else {
+            return Result::Err(der_error())
+        }
+    }
+    if !named {
+        return Result::Err(der_error())
+    }
+    let d = natural(fields[1].content)?;
+    let private = padded_integer(d, 32)?;
+    let point = curves::p256_public(private).map_err(|_| der_error())?;
+    Result::Ok(Material::Ec { x: point.x, y: point.y, private: Option::Some(private) })
+}
+
+fn pkcs8(input: Vec[u8], algorithm: Algorithm) -> Result[Material, Error] {
+    let fields = der_fields(der_tlv(input)?, 48)?;
+    if fields.len() < 3 || fields.len() > 4 || !der_unsigned(fields[0])?.is_zero()
+        || fields[2].tag != 4 {
+        return Result::Err(der_error())
+    }
+    if fields.len() == 4 && fields[3].tag != 160 {
+        return Result::Err(der_error())
+    }
+    der_algorithm(fields[1], algorithm)?;
+    match algorithm {
+        Algorithm::RS256 => rsa_der(fields[2].content, true),
+        Algorithm::ES256 => ec_private(fields[2].content, true),
+        Algorithm::EdDSA => {
+            let value = der_tlv(fields[2].content)?;
+            if value.tag != 4 || value.content.len() != 32 {
+                return Result::Err(der_error())
+            }
+            let public = curves::ed25519_public(value.content).map_err(|_| der_error())?;
+            Result::Ok(Material::Ed { public, seed: Option::Some(value.content) })
+        },
+        Algorithm::HS256 => Result::Err(der_error()),
+    }
+}
+
+fn pkix(input: Vec[u8], algorithm: Algorithm) -> Result[Material, Error] {
+    let fields = der_fields(der_tlv(input)?, 48)?;
+    if fields.len() != 2 || fields[1].tag != 3 || fields[1].content.is_empty()
+        || fields[1].content[0] != 0 {
+        return Result::Err(der_error())
+    }
+    der_algorithm(fields[0], algorithm)?;
+    let data = fields[1].content.slice(1, fields[1].content.len()).to_vec();
+    match algorithm {
+        Algorithm::RS256 => rsa_der(data, false),
+        Algorithm::ES256 => {
+            if data.len() != 65 || data[0] != 4 {
+                return Result::Err(der_error())
+            }
+            let x = data.slice(1, 33).to_vec();
+            let y = data.slice(33, 65).to_vec();
+            if !curves::valid_p256(x, y) {
+                return Result::Err(der_error())
+            }
+            Result::Ok(Material::Ec { x, y, private: Option::None })
+        },
+        Algorithm::EdDSA => {
+            if data.len() != 32 {
+                return Result::Err(der_error())
+            }
+            Result::Ok(Material::Ed { public: data, seed: Option::None })
+        },
+        Algorithm::HS256 => Result::Err(der_error()),
+    }
+}
+
+fn pem_key(algorithm: Algorithm, input: string, id: string, private: bool) -> Result[Key, Error] {
+    if algorithm == Algorithm::HS256 || input.byte_len() > 65536 || !valid_id(id) {
+        return Result::Err(failure(ErrorKind::Key, "invalid PEM key configuration"))
+    }
+    let trimmed = text::trim_space(input);
+    if !trimmed.starts_with("-----BEGIN ") || trimmed.split("-----BEGIN ").len() != 2 {
+        return Result::Err(failure(ErrorKind::Key, "expected one PEM block"))
+    }
+    let (block, end) = pem::decode(trimmed, 65536, 65536, 0).map_err(|_| der_error())?.ok_or(
+        der_error(),
+    )?;
+    if text::trim_space(trimmed.byte_slice(end, trimmed.byte_len())) != ""
+        || !block.headers().is_empty() {
+        return Result::Err(failure(ErrorKind::Key, "expected one unencrypted PEM block"))
+    }
+    let data = block.data().to_vec();
+    let material = if private {
+        match block.label() {
+            "PRIVATE KEY" => pkcs8(data, algorithm)?,
+            "RSA PRIVATE KEY" => {
+                if algorithm != Algorithm::RS256 {
+                    return Result::Err(der_error())
+                }
+                rsa_der(data, true)?
+            },
+            "EC PRIVATE KEY" => {
+                if algorithm != Algorithm::ES256 {
+                    return Result::Err(der_error())
+                }
+                ec_private(data, false)?
+            },
+            _ => return Result::Err(failure(ErrorKind::Key, "unsupported private PEM block")),
+        }
+    } else {
+        match block.label() {
+            "PUBLIC KEY" => pkix(data, algorithm)?,
+            "RSA PUBLIC KEY" => {
+                if algorithm != Algorithm::RS256 {
+                    return Result::Err(der_error())
+                }
+                rsa_der(data, false)?
+            },
+            _ => return Result::Err(failure(ErrorKind::Key, "expected public key PEM")),
+        }
+    };
+    Result::Ok(Key { algorithm_value: algorithm, id, material })
+}

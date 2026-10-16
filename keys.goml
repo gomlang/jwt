@@ -1,0 +1,146 @@
+package jwt;
+
+use module::curves;
+use ecosystem::bigint::{BigUint};
+use std::crypto::hash::{Sha256Digest};
+use std::hash::{Hasher};
+use std::crypto::hmac;
+
+enum Material {
+    Hmac(Vec[u8]),
+    Rsa(RsaKey),
+    Ec {
+        x: Vec[u8],
+        y: Vec[u8],
+        private: Option[Vec[u8]],
+    },
+    Ed {
+        public: Vec[u8],
+        seed: Option[Vec[u8]],
+    },
+}
+
+pub struct Key {
+    algorithm_value: Algorithm,
+    id: string,
+    material: Material,
+}
+
+impl Key {
+    pub fn hmac(secret: Vec[u8], key_id: string) -> Result[Key, Error] {
+        if secret.len() < 32 || secret.len() > 65536 || !valid_id(key_id) {
+            return Result::Err(
+                failure(ErrorKind::Key, "HS256 requires 32..65536 secret bytes and a valid key id"),
+            )
+        }
+        let marker = "-----BEGIN ".to_bytes();
+        for i in 0..(secret.len() - marker.len() + 1) {
+            let matches = true;
+            for j in 0..marker.len() {
+                if secret[i + j] != marker[j] {
+                    matches = false;
+                    break
+                }
+            }
+            if matches {
+                return Result::Err(
+                    failure(ErrorKind::Key, "HS256 rejects PEM-shaped secret material"),
+                )
+            }
+        }
+        Result::Ok(
+            Key {
+                algorithm_value: Algorithm::HS256,
+                id: key_id,
+                material: Material::Hmac(secret.copy()),
+            },
+        )
+    }
+
+    pub fn private_pem(algorithm: Algorithm, pem: string, key_id: string) -> Result[Key, Error] {
+        pem_key(algorithm, pem, key_id, true)
+    }
+
+    pub fn public_pem(algorithm: Algorithm, pem: string, key_id: string) -> Result[Key, Error] {
+        pem_key(algorithm, pem, key_id, false)
+    }
+
+    pub fn public_jwk(algorithm: Algorithm, input: string) -> Result[Key, Error] {
+        if input.byte_len() > 65536 {
+            return Result::Err(failure(ErrorKind::Limit, "JWK exceeds 65536 bytes"))
+        }
+        if algorithm == Algorithm::HS256 {
+            return Result::Err(
+                failure(ErrorKind::Algorithm, "JWK requires an asymmetric verification algorithm"),
+            )
+        }
+        public_jwk(algorithm, strict_object(input)?)
+    }
+
+    pub fn key_id(self: Key) -> string {
+        self.id
+    }
+
+    pub fn algorithm(self: Key) -> string {
+        self.algorithm_value.to_string()
+    }
+}
+
+fn sha256(input: Vec[u8]) -> Vec[u8] {
+    let digest = Sha256Digest::new256();
+    digest.update(input.as_slice());
+    digest.sum().to_vec()
+}
+
+fn same_bytes(left: Vec[u8], right: Vec[u8]) -> bool {
+    if left.len() != right.len() {
+        return false
+    }
+    let different: u8 = 0;
+    for i in 0..left.len() {
+        different |= left[i] ^ right[i];
+    }
+    different == 0
+}
+
+fn signature(key: Key, input: Vec[u8]) -> Result[Vec[u8], Error] {
+    let signing = failure(ErrorKind::Key, "signing requires a private key");
+    match key.material {
+        Material::Hmac(secret) => hmac::sum(
+            Sha256Digest::new256,
+            secret.as_slice(),
+            input.as_slice(),
+        ).map(|value| value.to_vec()).map_err(
+            |_| failure(ErrorKind::Signature, "HMAC signing failed"),
+        ),
+        Material::Rsa(rsa) => rsa_sign(rsa, sha256(input)),
+        Material::Ec { x: _, y: _, private } => curves::p256_sign(private.ok_or(signing)?, input).map_err(
+            |_| failure(ErrorKind::Signature, "ECDSA signing failed"),
+        ),
+        Material::Ed { public: _, seed } => curves::ed25519_sign(seed.ok_or(signing)?, input).map_err(
+            |_| failure(ErrorKind::Signature, "Ed25519 signing failed"),
+        ),
+    }
+}
+
+fn verify_signature(key: Key, input: Vec[u8], signature: Vec[u8]) -> bool {
+    match key.material {
+        Material::Hmac(secret) => match hmac::sum(
+            Sha256Digest::new256,
+            secret.as_slice(),
+            input.as_slice(),
+        ) {
+            Result::Ok(value) => same_bytes(value.to_vec(), signature),
+            Result::Err(_) => false,
+        },
+        Material::Rsa(rsa) => rsa_verify(rsa, sha256(input), signature),
+        Material::Ec { x, y, private: _ } => curves::p256_verify(x, y, input, signature),
+        Material::Ed { public, seed: _ } => curves::ed25519_verify(public, input, signature),
+    }
+}
+
+fn natural(input: Vec[u8]) -> Result[BigUint, Error] {
+    BigUint::from_bytes_be(input.as_slice()).map_err(
+        |_| failure(ErrorKind::Key, "invalid key integer"),
+    )
+}

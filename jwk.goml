@@ -1,0 +1,140 @@
+package jwt;
+
+use module::curves;
+use std::json;
+
+fn jwk_bytes(object: json::Value, name: string, max_encoded: isize) -> Result[Vec[u8], Error] {
+    let invalid = failure(ErrorKind::Key, "invalid JWK public parameter encoding");
+    decode_segment(field_text(object, name).ok_or(invalid)?, max_encoded).map_err(|_| invalid)
+}
+
+fn public_jwk(algorithm: Algorithm, object: json::Value) -> Result[Key, Error] {
+    for name in["d", "p", "q", "dp", "dq", "qi", "oth", "k"] {
+        if json::field(object, name).is_some() {
+            return Result::Err(
+                failure(ErrorKind::Key, "private or symmetric JWK material is not accepted"),
+            )
+        }
+    }
+    if json::field(object, "alg").is_some()
+        && field_text(object, "alg") != Option::Some(algorithm.to_string()) {
+        return Result::Err(failure(ErrorKind::Algorithm, "JWK algorithm does not match policy"))
+    }
+    if json::field(object, "use").is_some() && field_text(object, "use") != Option::Some("sig") {
+        return Result::Err(failure(ErrorKind::Key, "JWK use must be sig"))
+    }
+    if let Some(value) = json::field(object, "key_ops") {
+        let operations = json::as_array(value).ok_or(
+            failure(ErrorKind::Key, "JWK key_ops must contain only verify"),
+        )?;
+        if operations.len() != 1 || json::as_string(operations[0]) != Option::Some("verify") {
+            return Result::Err(failure(ErrorKind::Key, "JWK key_ops must contain only verify"))
+        }
+    }
+    let id = "";
+    if json::field(object, "kid").is_some() {
+        id = field_text(object, "kid").ok_or(failure(ErrorKind::Key, "invalid JWK key id"))?;
+        if id == "" || !valid_id(id) {
+            return Result::Err(failure(ErrorKind::Key, "invalid JWK key id"))
+        }
+    }
+    let kty = field_text(object, "kty").ok_or(
+        failure(ErrorKind::Key, "JWK type does not match algorithm"),
+    )?;
+    if !(algorithm == Algorithm::RS256 && kty == "RSA"
+        || algorithm == Algorithm::ES256 && kty == "EC"
+        || algorithm == Algorithm::EdDSA && kty == "OKP") {
+        return Result::Err(failure(ErrorKind::Key, "JWK type does not match algorithm"))
+    }
+    for name in["n", "e", "crv", "x", "y"] {
+        let permitted = kty == "RSA" && (name == "n" || name == "e")
+            || kty == "EC" && (name == "crv" || name == "x" || name == "y")
+            || kty == "OKP" && (name == "crv" || name == "x");
+        if !permitted && json::field(object, name).is_some() {
+            return Result::Err(failure(ErrorKind::Key, "conflicting JWK key parameters"))
+        }
+    }
+    let material = if kty == "RSA" {
+        let n = jwk_bytes(object, "n", 1366)?;
+        let e = jwk_bytes(object, "e", 6)?;
+        if n[0] == 0 || e[0] == 0 {
+            return Result::Err(failure(ErrorKind::Key, "invalid RSA JWK integer encoding"))
+        }
+        Material::Rsa(rsa_public(natural(n)?, natural(e)?)?)
+    } else if kty == "EC" {
+        let x = jwk_bytes(object, "x", 43)?;
+        let y = jwk_bytes(object, "y", 43)?;
+        if field_text(object, "crv") != Option::Some("P-256") || x.len() != 32 || y.len() != 32
+            || !curves::valid_p256(x, y) {
+            return Result::Err(failure(ErrorKind::Key, "ES256 JWK requires a valid P-256 point"))
+        }
+        Material::Ec { x, y, private: Option::None }
+    } else {
+        let public = jwk_bytes(object, "x", 43)?;
+        if field_text(object, "crv") != Option::Some("Ed25519") || public.len() != 32 {
+            return Result::Err(
+                failure(ErrorKind::Key, "EdDSA JWK requires Ed25519 and a 32-byte public key"),
+            )
+        }
+        Material::Ed { public, seed: Option::None }
+    };
+    Result::Ok(Key { algorithm_value: algorithm, id, material })
+}
+
+pub fn public_jwks(input: string, algorithms: Vec[Algorithm]) -> Result[Vec[Key], Error] {
+    if input.byte_len() > 1048576 {
+        return Result::Err(failure(ErrorKind::Limit, "JWKS exceeds 1048576 bytes"))
+    }
+    if algorithms.len() == 0 || algorithms.len() > 3 {
+        return Result::Err(failure(ErrorKind::Algorithm, "invalid JWK algorithm allowlist"))
+    }
+    for i in 0..algorithms.len() {
+        if algorithms[i] == Algorithm::HS256 {
+            return Result::Err(failure(ErrorKind::Algorithm, "invalid JWK algorithm allowlist"))
+        }
+        for j in 0..i {
+            if algorithms[i] == algorithms[j] {
+                return Result::Err(failure(ErrorKind::Algorithm, "invalid JWK algorithm allowlist"))
+            }
+        }
+    }
+    let object = strict_object(input)?;
+    let missing = failure(ErrorKind::Key, "JWKS requires a keys array");
+    let entries = json::as_array(json::field(object, "keys").ok_or(missing)?).ok_or(missing)?;
+    if entries.len() == 0 || entries.len() > 64 {
+        return Result::Err(failure(ErrorKind::Limit, "JWKS requires 1..64 keys"))
+    }
+    let keys = Vec::new();
+    let ids: HashMap[string, bool] = HashMap::new();
+    for entry in entries {
+        let json::Value::Object(_) = entry else {
+            return Result::Err(failure(ErrorKind::Key, "JWKS entries must be objects"))
+        };
+        let algorithm = match field_text(entry, "kty").unwrap_or("") {
+            "RSA" => Algorithm::RS256,
+            "EC" => Algorithm::ES256,
+            "OKP" => Algorithm::EdDSA,
+            _ => return Result::Err(
+                failure(ErrorKind::Algorithm, "unsupported or disallowed JWK key type"),
+            ),
+        };
+        let allowed = false;
+        for candidate in algorithms {
+            if candidate == algorithm {
+                allowed = true;
+            }
+        }
+        if !allowed {
+            return Result::Err(
+                failure(ErrorKind::Algorithm, "unsupported or disallowed JWK key type"),
+            )
+        }
+        let key = public_jwk(algorithm, entry)?;
+        if key.id == "" || ids.get(key.id).is_some() {
+            return Result::Err(failure(ErrorKind::Key, "JWKS requires nonempty unique key ids"))
+        }
+        ids.set(key.id, true);
+        keys.push(key);
+    }
+    Result::Ok(keys)
+}
