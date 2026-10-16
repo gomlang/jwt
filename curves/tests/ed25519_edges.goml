@@ -1,0 +1,40 @@
+package tests;
+
+use ecosystem::jwt::curves;
+use std::fs;
+use std::testing;
+
+#[test]
+fn ed25519_adversarial_encodings_match_frozen_go_reference() -> () {
+    let content = testing::expect_ok(
+        fs::read_file_structured("curves/tests/ed25519_go_edges.tsv"),
+        "read Ed25519 Go reference cases",
+    );
+    let mut count = 0;
+    let mut accepted = 0;
+    let mut weak_positive = 0;
+    for line in content.split("\n") {
+        if line.byte_len() == 0 {
+            continue
+        }
+        let fields = line.split("\t");
+        testing::assert_eq(fields.len(), 5);
+        testing::assert(fields[4] == "true" || fields[4] == "false");
+        let expected = fields[4] == "true";
+        let actual = curves::ed25519_verify(raw(fields[1]), raw(fields[2]), raw(fields[3]));
+        if actual != expected {
+            testing::fail("Ed25519 differs from Go for " + fields[0]);
+        }
+        count += 1;
+        if expected {
+            accepted += 1;
+        }
+        if fields[0].starts_with("weak-positive-") {
+            testing::assert(actual);
+            weak_positive += 1;
+        }
+    }
+    testing::assert_eq(count, 799);
+    testing::assert_eq(accepted, 64);
+    testing::assert_eq(weak_positive, 8);
+}

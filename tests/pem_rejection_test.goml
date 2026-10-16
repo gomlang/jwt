@@ -1,0 +1,271 @@
+package tests;
+
+use ecosystem::jwt;
+use ecosystem::jwt::{Algorithm, Key, ErrorKind, Validation};
+use std::encoding::base64;
+use ecosystem::asn1;
+use std::encoding::pem;
+use std::bytes;
+use std::testing;
+
+fn wrap_pem(label: string, data: Vec[u8]) -> string {
+    testing::expect_ok(
+        pem::encode(
+            testing::expect_ok(
+                pem::Block::new(label, Vec::new(), bytes::Bytes::from_vec(data)),
+                "PEM block",
+            ),
+            65536,
+        ),
+        "PEM encoding",
+    )
+}
+
+#[test]
+fn pem_import_rejects_malformed_der_private_and_public_blocks() -> () {
+    for vector in pem_references() {
+        for private in[false, true] {
+            let input = if private {
+                vector.private
+            } else {
+                vector.public
+            };
+            let label = if private {
+                "PRIVATE KEY"
+            } else {
+                "PUBLIC KEY"
+            };
+            let block = testing::expect_some(
+                testing::expect_ok(pem::decode(input, 65536, 65536, 0), "PEM fixture"),
+                "PEM block",
+            ).0;
+            let data = block.data().to_vec();
+            let trailing = data.copy();
+            trailing.push(0);
+            let malformed_tag = data.copy();
+            malformed_tag[0] = 49;
+            for invalid in[
+                Vec::new(),
+                data.slice(0, data.len() - 1).to_vec(),
+                trailing,
+                malformed_tag,
+                Vec::from_array([48, 128, 0, 0]),
+            ] {
+                let encoded = wrap_pem(label, invalid);
+                let result = if private {
+                    Key::private_pem(vector.algorithm, encoded, "")
+                } else {
+                    Key::public_pem(vector.algorithm, encoded, "")
+                };
+                testing::assert_eq(
+                    testing::expect_err(result, "malformed DER").kind,
+                    ErrorKind::Key,
+                );
+            }
+            for prefix in[
+                "-----BEGIN " + label + "-----\nnot base64!\n-----END " + label + "-----\n",
+                "-----BEGIN " + label + "-----\nAAAA\n-----END WRONG TYPE-----\n",
+                "-----BEGIN " + label + "-----\n",
+            ] {
+                let result = if private {
+                    Key::private_pem(vector.algorithm, prefix + input, "")
+                } else {
+                    Key::public_pem(vector.algorithm, prefix + input, "")
+                };
+                testing::assert_eq(
+                    testing::expect_err(result, "skipped malformed PEM").kind,
+                    ErrorKind::Key,
+                );
+            }
+            let headers = Vec::from_array([("Proc-Type", "4,ENCRYPTED")]);
+            let encrypted = testing::expect_ok(
+                pem::encode(
+                    testing::expect_ok(
+                        pem::Block::new(label, headers, block.data()),
+                        "encrypted header",
+                    ),
+                    65536,
+                ),
+                "encrypted PEM",
+            );
+            let result = if private {
+                Key::private_pem(vector.algorithm, encrypted, "")
+            } else {
+                Key::public_pem(vector.algorithm, encrypted, "")
+            };
+            testing::assert(result.is_err());
+            testing::assert(
+                Key::public_pem(vector.algorithm, wrap_pem("CERTIFICATE", data), "").is_err(),
+            );
+        }
+    }
+}
+
+#[test]
+fn rsa_private_key_rejects_corrupt_crt_and_factor_parameters() -> () {
+    let fixture = pem_references()[0];
+    let block = testing::expect_some(
+        testing::expect_ok(pem::decode(fixture.alternate, 65536, 65536, 0), "PKCS1 fixture"),
+        "PKCS1 block",
+    ).0;
+    let limits = asn1::Limits::standard();
+    let sequence = testing::expect_ok(asn1::parse_tlv(block.data().as_slice(), limits), "PKCS1 DER");
+    let fields = testing::expect_ok(
+        asn1::split_tlvs(sequence.content.as_slice(), limits),
+        "PKCS1 fields",
+    );
+    for changed in 1..9 {
+        let content = Vec::new();
+        for index in 0..fields.len() {
+            let field = fields[index];
+            let value = if index == changed {
+                Vec::from_array([1])
+            } else {
+                field.content
+            };
+            content.extend(
+                testing::expect_ok(
+                    asn1::encode_tlv(field.tag, value.as_slice(), limits),
+                    "mutated field",
+                ),
+            );
+        }
+        let der = testing::expect_ok(
+            asn1::encode_tlv(48, content.as_slice(), limits),
+            "mutated sequence",
+        );
+        testing::assert(
+            Key::private_pem(Algorithm::RS256, wrap_pem("RSA PRIVATE KEY", der), "").is_err(),
+        );
+    }
+}
+
+#[test]
+fn rsa_signature_length_range_and_wrong_public_key_are_rejected() -> () {
+    let fixture = pem_references()[0];
+    let public = testing::expect_ok(
+        Key::public_pem(Algorithm::RS256, fixture.public, "reference"),
+        "RSA public",
+    );
+    let second = testing::expect_ok(
+        Key::public_pem(Algorithm::RS256, pem_references()[1].public, "reference"),
+        "different RSA public",
+    );
+    let policy = Validation { now: Option::Some(100), ..Validation::new(Algorithm::RS256) };
+    testing::assert_eq(
+        testing::expect_err(
+            jwt::verify(fixture.token, Vec::from_array([second]), policy),
+            "wrong RSA key",
+        ).kind,
+        ErrorKind::Signature,
+    );
+    let block = testing::expect_some(
+        testing::expect_ok(pem::decode(fixture.public_alternate, 65536, 65536, 0), "RSA public DER"),
+        "public block",
+    ).0;
+    let limits = asn1::Limits::standard();
+    let sequence = testing::expect_ok(
+        asn1::parse_tlv(block.data().as_slice(), limits),
+        "RSA public sequence",
+    );
+    let fields = testing::expect_ok(
+        asn1::split_tlvs(sequence.content.as_slice(), limits),
+        "RSA public fields",
+    );
+    let modulus = fields[0].content.slice(1, fields[0].content.len()).to_vec();
+    let padded = Vec::from_array([0]);
+    padded.extend(modulus);
+    let parts = fixture.token.split(".");
+    for bad in[
+        modulus,
+        padded,
+        Vec::from_array([0; 255]),
+        Vec::from_array([0; 256]),
+        Vec::from_array([255; 256]),
+    ] {
+        let encoded = base64::encode_with(
+            bytes::Bytes::from_vec(bad),
+            base64::Variant::UrlSafeNoPadding,
+        );
+        let token = parts[0] + "." + parts[1] + "." + encoded;
+        testing::assert_eq(
+            testing::expect_err(
+                jwt::verify(token, Vec::from_array([public]), policy),
+                "RSA signature range",
+            ).kind,
+            ErrorKind::Signature,
+        );
+    }
+}
+
+#[test]
+fn rsa_private_import_rejects_fermat_vulnerable_close_primes() -> () {
+    let pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA/PG7VIZNDQGg5DQjhVSiG2KY+Vz7Er3Nxi2ubRCGtsAviMVX\nYIE/SNcCmcD9QBvsxlhQAOg2qWqnwuOV8ItfXB7Nddt4d4GlSqkSs5OM6E3DbMHv\nFptsHPg1gCHK7U+cd1jFzogyKKWPN4dtu7SzDJdisF87rQicC5Wy1ROieC9XT6R6\nRVpNaIf9c6ARXQlOcd5EXS2w+jy7060nWL45seDa513kI2xtaU3voxxBCG4S3dOd\nwucKXv80xRYvDXGLg8FZUWOTseLskxR0ouYrOMrdh1s6LQuVuDbRH+IJbuSAtM9e\nEW2m0lWKlUPoB43AX43h7G9ijeAnEYzzHn2UHQIDAQABAoIBAFBnBoT3q8ZWni3r\n5N6c6GqMDNQ3Ghf6/U3hd3BzsF6m+HUhRYUHkHY24jy9e8LFHZ5us/+V0MpJfMoW\nTbMImmdN40FzYfea3k+9LpSmckPldBk+DCHDhbovq9Hu6/JDPBkzvqzH3inNdpjQ\nE7F23vNBq70kiHOYKQIFs7LHav2IbRHsBKoY2BT/22SzcnZhTlYuOa2m5DL/kOp1\nzWE8/feHwmn5cMradQi83mBL8FgI6quIb/8jVPJEjnjZ/EtcPmbvyVKGhITlMjok\nsvVg+o8XB9ebv44U/cdVjJluqcX63KWABjq4w+6yXiMi4bpwR+cuobTTABJNVSnH\nQhs2moECgYEA/nexEVmMf7AvpHLwIypEhqK8s4KK8FE/xK80N+gUmS6hbFwdSCmh\nX2Lx1jbAXBFuEvEnxWV2JkgdrnTG7mZTQZvXugPUQIlAjt5v/yv4GT97tN4zLF0u\nBtoFqF81bDVznJDjreL4HLRV8sZ/UW0OCbnc6Hxh1mfjQAZwFduULpMCgYEA/nex\nEVmMf7AvpHLwIypEhqK8s4KK8FE/xK80N+gUmS6hbFwdSCmhX2Lx1jbAXBFuEvEn\nxWV2JkgdrnTG7mZTQZvXugPUQIlAjt5v/yv4GT97tN4zLF0uBtoFqF81bDVznJDj\nreL4HLRV8sZ/UW0OCbnc6Hxh1mfjQAZwFduUMI8CgYBSdI5XxOCV741AiE3v1x5l\nUg47TK2guXMkVHFjPDyQdl+wMRj77SFxOyqJ8yvZqXw1fxcYC4yBUxTrFsPvNBD+\nTXVVvS/lyZO1t7YqxSCbbcq0DNwgIAFuDu+OY2t4KMnRjdF44vbqtjSzekZ/KAtI\nc4V1f/hj9T3Z3TwsmP4nKQKBgQDXyHuYcM1ZgfgEhYro5vDRErLdrjdPbjaa/M9V\nETJWa1prXvldth+nmWnl8uvPpuAmo+TL2SwFbmXtCA2hH5g+LH8UuCaGy1y5ShrC\n0XBDSLgIOdw/JIzhNoRRsNrGddUh0SOg0rT+8lVn17cjP00GJlwTsVXt0I6+PjdR\n8a+KNQKBgQCCvX7A2dnSvMndDrTTlDRXUJZePojlTAMH0vYKlPhw+DW1J0N0MZv7\nFhyAtFGyU4mwB/7Dp4fKF/MHfYJtYe1LiQN/UZbgp0X0vd/XQm7Wi/R4pI4ygoUA\nfyImocxUUeM1u1K1j1Ie360ql16kSq0B+TF/gmy5PnI8nIElb02lCA==\n-----END RSA PRIVATE KEY-----\n";
+    testing::assert_eq(
+        testing::expect_err(Key::private_pem(Algorithm::RS256, pem, ""), "close RSA primes").kind,
+        ErrorKind::Key,
+    );
+}
+
+#[test]
+fn pkcs8_rejects_invalid_nested_sec1_explicit_parameters() -> () {
+    let fixture = pem_references()[2];
+    let block = testing::expect_some(
+        testing::expect_ok(pem::decode(fixture.private, 65536, 65536, 0), "P256 PKCS8"),
+        "P256 block",
+    ).0;
+    let limits = asn1::Limits::standard();
+    let outer = testing::expect_ok(asn1::parse_tlv(block.data().as_slice(), limits), "PKCS8 outer");
+    let fields = testing::expect_ok(
+        asn1::split_tlvs(outer.content.as_slice(), limits),
+        "PKCS8 fields",
+    );
+    let inner = testing::expect_ok(
+        asn1::parse_tlv(fields[2].content.as_slice(), limits),
+        "SEC1 inner",
+    );
+    let inner_fields = testing::expect_ok(
+        asn1::split_tlvs(inner.content.as_slice(), limits),
+        "SEC1 fields",
+    );
+    for explicit in[Vec::from_array([160, 3, 6, 1, 128]), Vec::from_array([161, 4, 3, 2, 7, 1])] {
+        let body = Vec::new();
+        for index in 0..2 {
+            body.extend(
+                testing::expect_ok(
+                    asn1::encode_tlv(
+                        inner_fields[index].tag,
+                        inner_fields[index].content.as_slice(),
+                        limits,
+                    ),
+                    "SEC1 required field",
+                ),
+            );
+        }
+        body.extend(explicit);
+        let ec = testing::expect_ok(asn1::encode_tlv(48, body.as_slice(), limits), "SEC1 wrapper");
+        let pkcs8_body = Vec::new();
+        for index in 0..2 {
+            pkcs8_body.extend(
+                testing::expect_ok(
+                    asn1::encode_tlv(fields[index].tag, fields[index].content.as_slice(), limits),
+                    "PKCS8 required field",
+                ),
+            );
+        }
+        pkcs8_body.extend(
+            testing::expect_ok(asn1::encode_tlv(4, ec.as_slice(), limits), "PKCS8 octets"),
+        );
+        let encoded = testing::expect_ok(
+            asn1::encode_tlv(48, pkcs8_body.as_slice(), limits),
+            "PKCS8 wrapper",
+        );
+        testing::assert_eq(
+            testing::expect_err(
+                Key::private_pem(Algorithm::ES256, wrap_pem("PRIVATE KEY", encoded), ""),
+                "invalid inner SEC1",
+            ).kind,
+            ErrorKind::Key,
+        );
+    }
+}

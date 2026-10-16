@@ -1,0 +1,132 @@
+package tests;
+
+use ecosystem::jwt::curves;
+use ecosystem::bigint::{BigUint};
+use std::crypto::hash::{Sha256Digest};
+use std::hash::{Hasher};
+use std::testing;
+
+struct Affine {
+    x: BigUint,
+    y: BigUint,
+    infinity: bool,
+}
+
+fn integer(value: string) -> BigUint {
+    testing::expect_ok(BigUint::parse_radix(value, 16), "reference integer")
+}
+
+fn residue(value: BigUint, modulus: BigUint) -> BigUint {
+    testing::expect_ok(value.rem(modulus), "reference remainder")
+}
+
+fn difference(left: BigUint, right: BigUint, modulus: BigUint) -> BigUint {
+    residue(testing::expect_ok(left.add(modulus).sub(right), "reference difference"), modulus)
+}
+
+fn inverse(value: BigUint, modulus: BigUint) -> BigUint {
+    testing::expect_some(
+        testing::expect_ok(value.mod_inverse(modulus), "reference inverse"),
+        "reference invertible value",
+    )
+}
+
+fn affine_add(left: Affine, right: Affine, prime: BigUint) -> Affine {
+    if left.infinity {
+        return right
+    }
+    if right.infinity {
+        return left
+    }
+    let (numerator, denominator) = if left.x == right.x {
+        if left.y != right.y || left.y.is_zero() {
+            return Affine { x: BigUint::zero(), y: BigUint::zero(), infinity: true }
+        }
+        let numerator = difference(
+            residue(left.x.mul(left.x).mul(BigUint::from_u64(3)), prime),
+            BigUint::from_u64(3),
+            prime,
+        );
+        (numerator, residue(left.y.mul(BigUint::from_u64(2)), prime))
+    } else {
+        (difference(right.y, left.y, prime), difference(right.x, left.x, prime))
+    };
+    let slope = residue(numerator.mul(inverse(denominator, prime)), prime);
+    let x = difference(difference(residue(slope.mul(slope), prime), left.x, prime), right.x, prime);
+    let y = difference(residue(slope.mul(difference(left.x, x, prime)), prime), left.y, prime);
+    Affine { x, y, infinity: false }
+}
+
+fn affine_mul(point: Affine, scalar: BigUint, prime: BigUint) -> Affine {
+    let mut result = Affine { x: BigUint::zero(), y: BigUint::zero(), infinity: true };
+    let mut power = point;
+    for index in 0..scalar.bits() {
+        if scalar.bit(index) {
+            result = affine_add(result, power, prime);
+        }
+        power = affine_add(power, power, prime);
+    }
+    result
+}
+
+#[test]
+fn p256_random_signatures_pass_independent_affine_bigint_verifier() -> () {
+    let prime = integer("ffffffff00000001000000000000000000000000ffffffffffffffffffffffff");
+    let order = integer("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551");
+    let generator = Affine {
+        x: integer("6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296"),
+        y: integer("4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5"),
+        infinity: false,
+    };
+    for secret in Vec::from_array([1, 4294967297, 18446744073709551615]).iter() {
+        let private = BigUint::from_u64(secret);
+        let message = raw("00112233445566778899aabbccddeeff");
+        let signature = testing::expect_ok(
+            curves::p256_sign(private.to_bytes_be(), message),
+            "P-256 random signing",
+        );
+        let r = testing::expect_ok(
+            BigUint::from_bytes_be(signature.as_slice().sub(0, 32)),
+            "reference r",
+        );
+        let s = testing::expect_ok(
+            BigUint::from_bytes_be(signature.as_slice().sub(32, 64)),
+            "reference s",
+        );
+        testing::assert(!r.is_zero() && r.cmp(order) == Ordering::Less);
+        testing::assert(!s.is_zero() && s.cmp(order) == Ordering::Less);
+        let digest = Sha256Digest::new256();
+        digest.update(message.as_slice());
+        let z = testing::expect_ok(
+            BigUint::from_bytes_be(digest.sum().as_slice()),
+            "reference hash",
+        );
+        let coefficient = residue(z.add(r.mul(private)).mul(inverse(s, order)), order);
+        let point = affine_mul(generator, coefficient, prime);
+        testing::assert(!point.infinity);
+        testing::assert(residue(point.x, order) == r);
+    }
+}
+
+#[test]
+fn p256_rejects_signature_whose_verification_point_is_infinity() -> () {
+    let order = integer("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551");
+    let message = raw("123456");
+    let digest = Sha256Digest::new256();
+    digest.update(message.as_slice());
+    let hashed = testing::expect_ok(BigUint::from_bytes_be(digest.sum().as_slice()), "hash");
+    let r = testing::expect_ok(order.sub(residue(hashed, order)), "opposite scalar").to_bytes_be();
+    let signature: Vec[u8] = Vec::new();
+    for _ in r.len()..32 {
+        signature.push(0);
+    }
+    for byte in r.iter() {
+        signature.push(byte);
+    }
+    for _ in 0..31 {
+        signature.push(0);
+    }
+    signature.push(1);
+    let public = testing::expect_ok(curves::p256_public(raw("01")), "public key");
+    testing::assert(!curves::p256_verify(public.x, public.y, message, signature));
+}

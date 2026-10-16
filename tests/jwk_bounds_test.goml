@@ -1,0 +1,321 @@
+package tests;
+
+use ecosystem::jwt;
+use ecosystem::jwt::{Algorithm, Key, ErrorKind, Validation};
+use ecosystem::bigint::{BigUint};
+use std::json;
+use std::bytes;
+use std::encoding::base64;
+use std::testing;
+use std::task;
+
+fn jwk_field(input: string, name: string, value: json::Value) -> string {
+    let object = testing::expect_ok(json::parse(input), "JWK test object");
+    let json::Value::Object(entries) = object else {
+        return ""
+    };
+    let result = Vec::new();
+    for (key, previous) in entries {
+        if key != name {
+            result.push((key, previous));
+        }
+    }
+    result.push((name, value));
+    json::encode(json::Value::Object(result))
+}
+
+fn public_encoded(value: Vec[u8]) -> json::Value {
+    json::Value::String(
+        base64::encode_with(bytes::Bytes::from_vec(value), base64::Variant::UrlSafeNoPadding),
+    )
+}
+
+fn modulus(bits: isize) -> Vec[u8] {
+    testing::expect_ok(BigUint::one().shl(bits - 1), "modulus").add(BigUint::one()).to_bytes_be()
+}
+
+#[test]
+fn public_jwk_metadata_acceptance_and_rejection_matrix() -> () {
+    for field in["d", "p", "q", "dp", "dq", "qi", "oth", "k", "n", "e", "y"] {
+        for value in[
+            json::Value::Null,
+            json::Value::String(""),
+            json::Value::Array(Vec::new()),
+            json::Value::Object(Vec::new()),
+        ] {
+            testing::assert_eq(
+                testing::expect_err(
+                    Key::public_jwk(Algorithm::EdDSA, jwk_field(ed_jwk(""), field, value)),
+                    "conflicting JWK parameter",
+                ).kind,
+                ErrorKind::Key,
+            );
+        }
+    }
+    for (field, invalid) in[
+        (
+            "kty",
+            Vec::from_array(
+                [
+                    json::Value::Null,
+                    json::Value::String("oct"),
+                    json::Value::String("EC"),
+                    json::Value::String("okp"),
+                    json::Value::Number("1"),
+                ],
+            ),
+        ),
+        (
+            "crv",
+            Vec::from_array(
+                [
+                    json::Value::Null,
+                    json::Value::String("X25519"),
+                    json::Value::String("Ed448"),
+                    json::Value::String("ed25519"),
+                ],
+            ),
+        ),
+        (
+            "alg",
+            Vec::from_array(
+                [
+                    json::Value::Null,
+                    json::Value::String("HS256"),
+                    json::Value::String("Ed25519"),
+                    json::Value::String("none"),
+                    json::Value::String(""),
+                ],
+            ),
+        ),
+        (
+            "use",
+            Vec::from_array(
+                [
+                    json::Value::Null,
+                    json::Value::String("enc"),
+                    json::Value::String("SIG"),
+                    json::Value::String(""),
+                ],
+            ),
+        ),
+        (
+            "kid",
+            Vec::from_array(
+                [
+                    json::Value::Null,
+                    json::Value::String(""),
+                    json::Value::String("bad\u0000id"),
+                    json::Value::String("bad\rid"),
+                    json::Value::String("bad\nid"),
+                    json::Value::String("é".repeat(129)),
+                ],
+            ),
+        ),
+    ] {
+        for value in invalid {
+            testing::assert(
+                Key::public_jwk(Algorithm::EdDSA, jwk_field(ed_jwk(""), field, value)).is_err(),
+            );
+        }
+        testing::assert(
+            Key::public_jwk(
+                Algorithm::EdDSA,
+                jwk_field(ed_jwk(""), field, json::Value::Array(Vec::new())),
+            ).is_err(),
+        );
+    }
+    for operations in[
+        "null",
+        "\"verify\"",
+        "[]",
+        "[\"verify\",\"verify\"]",
+        "[\"sign\",\"verify\"]",
+        "[\"encrypt\"]",
+        "[null]",
+        "[{}]",
+    ] {
+        testing::assert(
+            Key::public_jwk(Algorithm::EdDSA, ed_jwk(",\"key_ops\":" + operations)).is_err(),
+        );
+    }
+    for input in[
+        ed_jwk(""),
+        jwk_field(ed_jwk(""), "kid", json::Value::String("é".repeat(128))),
+        ed_jwk(",\"use\":\"sig\""),
+        ed_jwk(",\"key_ops\":[\"verify\"]"),
+        ed_jwk(",\"x5u\":\"https://unused.invalid/key\""),
+        ed_jwk(",\"x5c\":[\"ignored\"]"),
+        ed_jwk(",\"extension\":{\"nested\":true}"),
+    ] {
+        testing::assert_ok(Key::public_jwk(Algorithm::EdDSA, input));
+    }
+}
+
+#[test]
+fn jwk_unsigned_integer_coordinate_and_json_bounds() -> () {
+    let rsa = "{\"kty\":\"RSA\",\"e\":\"AQAB\"}";
+    for bits in[2048, 8192] {
+        let _ = testing::expect_ok(
+            Key::public_jwk(Algorithm::RS256, jwk_field(rsa, "n", public_encoded(modulus(bits)))),
+            "RSA modulus " + bits.to_string(),
+        );
+    }
+    let leading = Vec::from_array([0]);
+    leading.extend(modulus(2048));
+    let even = modulus(2048);
+    even[even.len() - 1] = 0;
+    for bad in[Vec::new(), Vec::from_array([0]), leading, even, modulus(2047), modulus(8193)] {
+        testing::assert(
+            Key::public_jwk(Algorithm::RS256, jwk_field(rsa, "n", public_encoded(bad))).is_err(),
+        );
+    }
+    let valid = jwk_field(rsa, "n", public_encoded(modulus(2048)));
+    for bad in[
+        Vec::new(),
+        Vec::from_array([0]),
+        Vec::from_array([1]),
+        Vec::from_array([2]),
+        Vec::from_array([4]),
+        Vec::from_array([0, 1, 0, 1]),
+        Vec::from_array([128, 0, 0, 1]),
+        Vec::from_array([1, 0, 0, 0, 1]),
+    ] {
+        testing::assert(
+            Key::public_jwk(Algorithm::RS256, jwk_field(valid, "e", public_encoded(bad))).is_err(),
+        );
+    }
+    for good in[
+        Vec::from_array([3]),
+        Vec::from_array([1, 0, 1]),
+        Vec::from_array([127, 255, 255, 255]),
+    ] {
+        let _ = testing::expect_ok(
+            Key::public_jwk(Algorithm::RS256, jwk_field(valid, "e", public_encoded(good))),
+            "RSA exponent",
+        );
+    }
+    let ec = jwk_vectors()[1].1;
+    for field in["x", "y"] {
+        for value in[
+            json::Value::Null,
+            public_encoded(Vec::from_array([0; 31])),
+            public_encoded(Vec::from_array([0; 33])),
+            public_encoded(Vec::from_array([0; 32])),
+            public_encoded(
+                testing::expect_ok(
+                    BigUint::parse_radix(
+                        "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff",
+                        16,
+                    ),
+                    "P256 prime",
+                ).to_bytes_be(),
+            ),
+        ] {
+            testing::assert(Key::public_jwk(Algorithm::ES256, jwk_field(ec, field, value)).is_err());
+        }
+    }
+    testing::assert(
+        Key::public_jwk(Algorithm::ES256, jwk_field(ec, "crv", json::Value::String("P-384"))).is_err(),
+    );
+    for input in[
+        "[]",
+        "null",
+        ed_jwk("") + " {}",
+        "{\"a\":{\"n\":1,\"\\u006e\":2}}",
+        "{\"x\":\"\\ud800\"}",
+        "{\"x\":" + "[".repeat(65) + "0" + "]".repeat(65) + "}",
+        "{\"x\":[" + "0,".repeat(16384) + "0]}",
+    ] {
+        testing::assert_eq(
+            testing::expect_err(Key::public_jwk(Algorithm::EdDSA, input), "strict JWK JSON").kind,
+            ErrorKind::Json,
+        );
+    }
+    let input = ed_jwk("");
+    let _ = testing::expect_ok(
+        Key::public_jwk(Algorithm::EdDSA, input + " ".repeat(65536 - input.byte_len())),
+        "maximum JWK bytes",
+    );
+    testing::assert_eq(
+        testing::expect_err(Key::public_jwk(Algorithm::EdDSA, " ".repeat(65537)), "JWK bytes").kind,
+        ErrorKind::Limit,
+    );
+    let set = "{\"keys\":[" + ed_jwk(",\"kid\":\"active\"") + "]}";
+    let _ = testing::expect_ok(
+        jwt::public_jwks(
+            set + " ".repeat(1048576 - set.byte_len()),
+            Vec::from_array([Algorithm::EdDSA]),
+        ),
+        "maximum JWKS bytes",
+    );
+    testing::assert_eq(
+        testing::expect_err(
+            jwt::public_jwks(" ".repeat(1048577), Vec::from_array([Algorithm::EdDSA])),
+            "JWKS bytes",
+        ).kind,
+        ErrorKind::Limit,
+    );
+}
+
+#[test]
+fn independent_jwk_signatures_verify_concurrently_and_reject_forgery() -> () {
+    let document = "{\"keys\":[" + jwk_vectors()[0].1 + "," + jwk_vectors()[1].1 + ","
+        + jwk_vectors()[2].1
+        + "]}";
+    let keys = testing::expect_ok(
+        jwt::public_jwks(
+            document,
+            Vec::from_array([Algorithm::RS256, Algorithm::ES256, Algorithm::EdDSA]),
+        ),
+        "mixed set",
+    );
+    task::scope(
+        |scope| {
+            let tasks = Vec::new();
+            for _ in 0..8 {
+                tasks.push(
+                    scope.spawn(
+                        |_| {
+                            for _ in 0..20 {
+                                for (algorithm, _, token) in jwk_vectors() {
+                                    let policy = Validation {
+                                        now: Option::Some(100),
+                                        ..Validation::new(algorithm),
+                                    };
+                                    testing::assert_ok(jwt::verify(token, keys, policy));
+                                }
+                            }
+                        },
+                    ),
+                );
+            }
+            let _ = task::join_all(tasks);
+        },
+    );
+    for (algorithm, _, token) in jwk_vectors() {
+        let policy = Validation { now: Option::Some(100), ..Validation::new(algorithm) };
+        let parts = token.split(".");
+        let bad = parts[0] + "." + parts[1] + "."
+            + (if parts[2].starts_with("A") {
+                "B"
+            } else {
+                "A"
+            })
+            + parts[2].byte_slice(1, parts[2].byte_len());
+        testing::assert_eq(
+            testing::expect_err(jwt::verify(bad, keys, policy), "forged signature").kind,
+            ErrorKind::Signature,
+        );
+    }
+}
+
+#[test]
+fn valid_p256_coordinate_keeps_required_leading_zero_octet() -> () {
+    testing::assert_ok(
+        Key::public_jwk(
+            Algorithm::ES256,
+            "{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"AFVDiUrz0A7X10Cr29dclrBod7eH219w7qeLkKjXwAo\",\"y\":\"u0yFo9jqKe-q-iRAaRLdhNWxTcMr9lbvbGvVil2UP5I\"}",
+        ),
+    );
+}

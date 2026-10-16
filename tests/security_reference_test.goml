@@ -1,0 +1,346 @@
+package tests;
+
+use ecosystem::jwt;
+use ecosystem::jwt::{Algorithm, Key, SignOptions, Validation, ErrorKind};
+use std::testing;
+
+#[test]
+fn independently_signed_malformed_tokens_fail_closed() -> () {
+    let policy = Validation { now: Option::Some(100), ..Validation::new(Algorithm::HS256) };
+    for token in[
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMCwiZXhwIjozMDB9.2djrPjXcHiUl_-Tv85pT85E7cV6RpE287GMyYy2nVIw",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMCwiXHUwMDY1eHAiOjMwMH0.qV9RTsIqVFRBcuCQNl5rU2i8D9lrU5r6cYH20DJK-10",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMCwiZGF0YSI6eyJhIjoxLCJcdTAwNjEiOjJ9fQ.xD5zvZdSZJODljzhbBxJHedBXIZ-QJ0ugToa3_Bg738",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMH0ge30.wqZlvhiMV2O-mhKlOAQfNuvLqVtvWWYXa_qOegJPjnw",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMCwieCI6Ilx1ZDgwMCJ9.4DbfftEXxyqxf1y77WWfKCd_dlZYfGRzsuopNNGi7dQ",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMCwieCI6Ilx1ZGMwMCJ9.If9tTU29PeGzpymfv9uf3SrnmEKnZdhv4NyOKCDWv_I",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMCwieCI6Ilx1ZDgwMFx1MDA0MSJ9.z_uOkplFz_5unsRGcMt_ahHaUPAoqXBVvp5-71cjY9E",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMCwieCI6Iv8ifQ.66DQrS9e_JDEaNmOc_trUcfcFuzg-EyQKgeXMG5wqcs",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOiIyMDAifQ.nd888O-Gh4x_qZDzFS3o5VizjKQHdUDUfCvCSUXnh5w",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOm51bGx9.LC7-NLEAyKJaE4bRq-Tg-phAmDQ5xwAUR9MMj7a7b-8",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjFlOTk5OTk5fQ.OvCRDHTKYzU2I5TCkybPb6cgLlLjwtJIwvC2LJ0yF_c",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjFlLTk5OTk5OX0.OTH1ghocG5yWID75zZ2KZT5IbhYeN1saDW5_GzWfBGQ",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMCwibmJmIjpmYWxzZX0.sMXepdT9lwdYqyFxd0oFKU9PvNUimLcxfwKyDxUwHnA",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMCwiaWF0IjpbXX0.VwZhygLpMb53WYHWSRhZhKvYZiDTc5qUscVrp3YBGKo",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMCwiaXNzIjo0fQ.IYKDJhVXuCFC1zXxioBd5qxt-M1NhZxriWotAaKn8Mo",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMCwiYXVkIjpbXX0.dozsQOQJ7yg1TTxtRZaQfCHZstFB-2TSkdZ98LxP_UE",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMCwiYXVkIjpbImFwaSIsZmFsc2VdfQ.O2b8ZFHAIFE1BhAFf0Db6uolj9Sp6-cVFtU3yfbBoMw",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.W10.V7d1t6J076duTnJ7SaC48HXFMQ8BXkKlyNt8MBZtd7A",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.bnVsbA.DxF7qvi-DskBRYUp9PWe8PnvdmuzcqtaZX_z6ykpChU",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMCwibmVzdGVkIjpbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbWzBdXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXX0.rQ51JvOM7hYXRlBUquex87Rttk1iBoP-PlT91wLnx2Y",
+        "eyJhbGciOiJIUzI1NiIsImFsZyI6IkhTMjU2IiwidHlwIjoiSldUIn0.eyJleHAiOjIwMH0.GaIpyH9joZP1YN7BFYxWeBJBCS07ZJ2nIL7zC_RdVzk",
+        "eyJhbGciOiJIUzI1NiIsIlx1MDA2MWxnIjoiSFMyNTYiLCJ0eXAiOiJKV1QifQ.eyJleHAiOjIwMH0.O7EhjrFT_b_bsS3CP73s4IW7-nuf-hmGnvcwzD_tKHA",
+        "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJleHAiOjIwMH0.8KPxq4b7cEdKWvKnEP_LJ-nKISryLD38shCjuveH_Hs",
+        "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMH0.sOYpfvhuSR_kOt6J7cwTZ3JVDaD4Hew5n8H57GxNHao",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImNyaXQiOltdfQ.eyJleHAiOjIwMH0.ynN_9QLfunLIfsmaaUTUgdTFtLaPXclCkym7IbqJBKY",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImI2NCI6dHJ1ZX0.eyJleHAiOjIwMH0.5cDzs3r7GVvU5RtJOUGvk6AuYSkyUxOTejypsPhoyfU",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImprdSI6Imh0dHBzOi8vZXhhbXBsZS50ZXN0In0.eyJleHAiOjIwMH0.wUQz4H-Fub7tT5vO__odnLAyU2VLEqbfoZqrnK2SGH4",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImp3ayI6e319.eyJleHAiOjIwMH0.Islzpo-4wP_NvG7quexpEn2mBt_lgbELta4nsOyzUUs",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6bnVsbH0.eyJleHAiOjIwMH0.5D01RC7n8CmH0ReTT4_P6HBukjYGvqQ4Ey9KjWrBjck",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6IiJ9.eyJleHAiOjIwMH0.ae-Jyohc8TrSiF-3vokV6SKaZ3aNUXRcG2_mIibYSVo",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6Im90aGVyIn0.eyJleHAiOjIwMH0.xlEp_PiVa-qfy01WUtkXRgmCB-xXvi_U0BxmHUxKUy4",
+        "eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjIwMH0.Ceg8u-xCJQGFPpjiKvT5k4eHf-RJP3jBkED6OeRBwQM",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6Im1pc3NpbmcifQ.eyJleHAiOjIwMH0.0kZYAH5aZIyzYJUIq9XanVKu3t9bkragvvOG2HHwa-s",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsIng1dSI6IngifQ.eyJleHAiOjIwMH0.xzBMXeIsZrJItLLCsKYrcvxGgZNzGsFsx7R0l6X9t1s",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsIng1YyI6W119.eyJleHAiOjIwMH0.aERE2C5eEtsQfa7XKMv2CZudIfwV7GgpllSFOmYAndA",
+        "",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMH0.wXGqYfd2zHQhC5mBf-AU8qP-HUmiv52QZ25qW2Whz60.",
+        ".eyJleHAiOjIwMH0.wXGqYfd2zHQhC5mBf-AU8qP-HUmiv52QZ25qW2Whz60",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9=.eyJleHAiOjIwMH0.wXGqYfd2zHQhC5mBf-AU8qP-HUmiv52QZ25qW2Whz60",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\n.eyJleHAiOjIwMH0.wXGqYfd2zHQhC5mBf-AU8qP-HUmiv52QZ25qW2Whz60",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMH0.",
+        "A.eyJleHAiOjIwMH0.wXGqYfd2zHQhC5mBf-AU8qP-HUmiv52QZ25qW2Whz60",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMH1.qoLhcEBP28pwACnBAsPRmneoMnNzvFOxikLAPwYeY58",
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMH0.wXGqYfd2zHQhC5mBf-AU8qP-HUmiv52QZ25qW2Whz61",
+    ] {
+        testing::assert(jwt::verify(token, Vec::from_array([key("")]), policy).is_err());
+    }
+    testing::assert_ok(
+        jwt::verify(
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMCwieCI6Ilx1ZDgzZFx1ZGUwMCJ9.Bj8KaOjIWbIDGu6H4KLtY-OelUQmMQGLqGWAhgOkDTE",
+            Vec::from_array([key("")]),
+            policy,
+        ),
+    );
+}
+
+#[test]
+fn independently_signed_numeric_dates_preserve_exact_boundaries() -> () {
+    let cases: Vec[(string, i64, i64, Option[ErrorKind])] = Vec::from_array(
+        [
+            (
+                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjEwMH0.2rWo9-C7W5ttBPP-dqMxhQ1I7780K0LNTZySVyMsAJ0",
+                100,
+                0,
+                Option::Some(ErrorKind::Expired),
+            ),
+            (
+                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjEwMH0.2rWo9-C7W5ttBPP-dqMxhQ1I7780K0LNTZySVyMsAJ0",
+                100,
+                1,
+                Option::None,
+            ),
+            (
+                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjEwMC4wMDAwMDAwMDAwMDAwMDAwMDF9.jUdaNy69TxAqEW4lzhKhn9DZFz_TCes0EYSb8vjTmUA",
+                100,
+                0,
+                Option::None,
+            ),
+            (
+                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjFlMn0.ABRKXliJNvqSMcfovWyiWZwXzcfx5tJGuQNHdXOU1po",
+                100,
+                0,
+                Option::Some(ErrorKind::Expired),
+            ),
+            (
+                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMCwibmJmIjoxMDF9.pMHOMtaEy6ihpD8oyBAgF-BMIzT3a4KoEr2OdlQzVW8",
+                100,
+                0,
+                Option::Some(ErrorKind::NotYetValid),
+            ),
+            (
+                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMCwibmJmIjoxMDF9.pMHOMtaEy6ihpD8oyBAgF-BMIzT3a4KoEr2OdlQzVW8",
+                100,
+                1,
+                Option::None,
+            ),
+            (
+                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMCwiaWF0IjoxMDF9.-5wKpdOG53uiyWxw3x1x54hVYaeEmURi7qlbxR-M4LA",
+                100,
+                0,
+                Option::Some(ErrorKind::IssuedAt),
+            ),
+            (
+                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMCwiaWF0IjoxMDB9.67a1HQ1SJPPjniGbA_IqtcgANTCmVcF5lyOMYTSKEmk",
+                100,
+                0,
+                Option::None,
+            ),
+            (
+                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.e30.svo3sQiBr6VRrugrrB1OoHS7Y-c0pzdPFYhCfjX7elM",
+                100,
+                0,
+                Option::Some(ErrorKind::Claims),
+            ),
+            (
+                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjI1MzQwMjMwMDc5OX0.C8h3ke9JgvTEC2ZK4UdE8q1-FhKzWK0QYt23halTHgY",
+                253402300798,
+                0,
+                Option::None,
+            ),
+            (
+                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjI1MzQwMjMwMDc5OS4wMDAwMDAwMDAxfQ.UDierMa6t8u2s_prdVUIKtGa1kMKROc32J76eDydU4Q",
+                0,
+                0,
+                Option::Some(ErrorKind::Claims),
+            ),
+            (
+                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOi0yNTM0MDIzMDA3OTkuMDAwMDAwMDAwMX0.bLwa_qMIXXB0slGRwU4ca9h2XMyHVfQcPJjtSt-VEOc",
+                0,
+                0,
+                Option::Some(ErrorKind::Claims),
+            ),
+            (
+                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjFlLTEwMH0.vT61F-QdmdH2TlPR6sHsUv5NVLz-dOdoXlrIaBITFk0",
+                0,
+                0,
+                Option::None,
+            ),
+            (
+                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjFlLTEwMX0.wEhKr9MsVQh8pgZX8qYQYscF6dxkHrTk0tvJkYGNZ84",
+                0,
+                0,
+                Option::Some(ErrorKind::Claims),
+            ),
+            (
+                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjBlMTAwfQ.qxQKFRWptOonqWWaUke6u1CacCRROYfe2Sf6ZamUwoI",
+                -1,
+                0,
+                Option::None,
+            ),
+            (
+                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjBlMTAxfQ.FLSLIqdvlaA6cOq4E6gBNMxrheq6WIRAUIQPbcUm3Co",
+                -1,
+                0,
+                Option::Some(ErrorKind::Claims),
+            ),
+            (
+                "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOi0wLjAwMDAwMDAwMDAxfQ.gebXL1F8kSbQkze_B5TCTfMaD3E24ZLJA2TbceYQhsk",
+                0,
+                0,
+                Option::Some(ErrorKind::Expired),
+            ),
+        ],
+    );
+    for (token, now, leeway, expected) in cases {
+        let policy = Validation {
+            now: Option::Some(now),
+            leeway_seconds: leeway,
+            ..Validation::new(Algorithm::HS256),
+        };
+        match expected {
+            Option::None => testing::assert_ok(
+                jwt::verify(token, Vec::from_array([key("")]), policy),
+            ),
+            Option::Some(kind) => testing::assert_eq(
+                testing::expect_err(
+                    jwt::verify(token, Vec::from_array([key("")]), policy),
+                    "date rejection",
+                ).kind,
+                kind,
+            ),
+        }
+    }
+}
+
+#[test]
+fn secret_snapshot_and_limits_are_preserved() -> () {
+    let secret = "0123456789abcdef0123456789abcdef".to_bytes();
+    let active = testing::expect_ok(Key::hmac(secret, "v2"), "secret snapshot");
+    secret[0] = 0;
+    let token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6InYyIn0.eyJleHAiOjIwMH0.DYCVDYEb0gqPqzi8zQCwJ3aFJBmp9tCvUwfuNwH1wbk";
+    let policy = Validation { now: Option::Some(100), ..Validation::new(Algorithm::HS256) };
+    testing::assert_ok(jwt::verify(token, Vec::from_array([key("v1"), active]), policy));
+    testing::assert(jwt::verify(token, Vec::from_array([active, active]), policy).is_err());
+    testing::assert(
+        jwt::verify(
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMH0.wXGqYfd2zHQhC5mBf-AU8qP-HUmiv52QZ25qW2Whz60",
+            Vec::from_array([key("v1"), active]),
+            policy,
+        ).is_err(),
+    );
+    for limit in[0, 255, 1048577] {
+        testing::assert(
+            jwt::verify(
+                token,
+                Vec::from_array([active]),
+                Validation { max_token_bytes: limit, ..policy },
+            ).is_err(),
+        );
+    }
+    for leeway in[-1, 86401] {
+        testing::assert(
+            jwt::verify(
+                token,
+                Vec::from_array([active]),
+                Validation { leeway_seconds: leeway, ..policy },
+            ).is_err(),
+        );
+    }
+    for now in[-253402300800, 253402300800] {
+        testing::assert(
+            jwt::verify(
+                token,
+                Vec::from_array([active]),
+                Validation { now: Option::Some(now), ..policy },
+            ).is_err(),
+        );
+    }
+    testing::assert(
+        Key::hmac("-----BEGIN PUBLIC KEY----- long enough secret".to_bytes(), "").is_err(),
+    );
+    testing::assert(
+        jwt::verify(
+            token,
+            Vec::from_array([active]),
+            Validation {
+                algorithms: Vec::from_array([Algorithm::HS256, Algorithm::HS256]),
+                ..policy,
+            },
+        ).is_err(),
+    );
+}
+
+#[test]
+fn rfc8037_signature_authenticates_before_non_json_payload_is_rejected() -> () {
+    let public = testing::expect_ok(
+        Key::public_jwk(Algorithm::EdDSA, ed_jwk("")),
+        "RFC8037 public key",
+    );
+    let token = "eyJhbGciOiJFZERTQSJ9.RXhhbXBsZSBvZiBFZDI1NTE5IHNpZ25pbmc.hgyY0il_MGCjP0JzlnLWG1PPOt7-09PGcvMg3AIbQR6dWbhijcNR4ki4iylGjg5BhVsPt9g7sVvpAr_MuM0KAg";
+    let policy = Validation {
+        token_type: "",
+        require_expiration: false,
+        now: Option::Some(0),
+        ..Validation::new(Algorithm::EdDSA),
+    };
+    testing::assert_eq(
+        testing::expect_err(
+            jwt::verify(token, Vec::from_array([public]), policy),
+            "non-JSON RFC payload",
+        ).kind,
+        ErrorKind::Json,
+    );
+    let corrupted = token.byte_slice(0, token.byte_len() - 2) + "AA";
+    testing::assert_eq(
+        testing::expect_err(
+            jwt::verify(corrupted, Vec::from_array([public]), policy),
+            "authentication precedes JSON",
+        ).kind,
+        ErrorKind::Signature,
+    );
+}
+
+#[test]
+fn malformed_compact_token_mutation_corpus_is_recoverable() -> () {
+    let policy = Validation { now: Option::Some(100), ..Validation::new(Algorithm::HS256) };
+    let keys = Vec::from_array([key("")]);
+    for input in["..", ".", "a.b.c", "A.A.A", "{}.{}.{}", "null.null.null", "a".repeat(1048577)] {
+        testing::assert(jwt::verify(input, keys, policy).is_err());
+    }
+    for length in 0..256 {
+        testing::assert(
+            jwt::verify("A".repeat(length) + "." + "Z".repeat(255 - length) + ".AA", keys, policy).is_err(),
+        );
+    }
+}
+
+#[test]
+fn claim_switches_keep_type_validation_and_json_complexity_boundaries() -> () {
+    let active = key("");
+    let policy = Validation {
+        now: Option::Some(100),
+        require_expiration: false,
+        check_issued_at: false,
+        ..Validation::new(Algorithm::HS256),
+    };
+    let token = testing::expect_ok(
+        jwt::sign_json(active, "{\"iat\":101}", SignOptions::new()),
+        "future issuance",
+    );
+    testing::assert_ok(jwt::verify(token, Vec::from_array([active]), policy));
+    testing::assert_eq(
+        testing::expect_err(
+            jwt::verify(
+                token,
+                Vec::from_array([active]),
+                Validation { check_issued_at: true, ..policy },
+            ),
+            "future issuance enabled",
+        ).kind,
+        ErrorKind::IssuedAt,
+    );
+    for claims in["{\"iat\":null}", "{\"nbf\":null}", "{\"exp\":null}"] {
+        testing::assert_eq(
+            testing::expect_err(
+                jwt::sign_json(active, claims, SignOptions::new()),
+                "registered type",
+            ).kind,
+            ErrorKind::Claims,
+        );
+    }
+    let depth_limit = "{\"exp\":200,\"x\":" + "[".repeat(63) + "0" + "]".repeat(63) + "}";
+    testing::assert_ok(jwt::sign_json(active, depth_limit, SignOptions::new()));
+    let too_deep = "{\"exp\":200,\"x\":" + "[".repeat(64) + "0" + "]".repeat(64) + "}";
+    testing::assert_eq(
+        testing::expect_err(jwt::sign_json(active, too_deep, SignOptions::new()), "JSON depth").kind,
+        ErrorKind::Json,
+    );
+    let node_limit = "{\"exp\":200,\"x\":[" + "0,".repeat(16380) + "0]}";
+    testing::assert_ok(jwt::sign_json(active, node_limit, SignOptions::new()));
+    let too_many = "{\"exp\":200,\"x\":[" + "0,".repeat(16381) + "0]}";
+    testing::assert_eq(
+        testing::expect_err(jwt::sign_json(active, too_many, SignOptions::new()), "JSON values").kind,
+        ErrorKind::Json,
+    );
+}

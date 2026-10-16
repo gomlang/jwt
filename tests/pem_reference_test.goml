@@ -1,0 +1,163 @@
+package tests;
+
+use ecosystem::jwt;
+use ecosystem::jwt::{Algorithm, Key, SignOptions, Validation, ErrorKind};
+use std::testing;
+use std::task;
+
+struct PemReference {
+    algorithm: Algorithm,
+    private: string,
+    alternate: string,
+    public: string,
+    public_alternate: string,
+    token: string,
+    claims: string,
+}
+
+fn pem_references() -> Vec[PemReference] {
+    Vec::from_array(
+        [
+            PemReference {
+                algorithm: Algorithm::RS256,
+                private: "-----BEGIN PRIVATE KEY-----\nMIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQDcOLqLB2N92PV8\nQ8dnPyq3IC9y8XtuwP5WuxuFBUVDssf8yOdk8z4oj9dQJEb1aWbmcbtajA4YyHnA\nMcR60VnQ/GO4onPTII+QGCFWAFZoUTeD6JsP2wzFrCTB9EMwyL9AFOJZAdxAx3hA\n6jsOORCGUpV9MVw1fBM1dbAY04ei+eEdr4R69fbomMTGXg2a0Auxy1H3yVcz02Fc\n7TtMciLXlyozDUHuUEoWb1EDbEf9X97kWpW5Ud2VTDXCb3+0MPy+UBDptGhpOJka\nSA7WzYKl6yLHAzA4asCI5KwoI3+IEVqX/EPGoCsQGU+wvNlXgZfJt3MmR3uiGdyP\nU+UrgQS1AgMBAAECggEAFdQJqX4x/mdi7c5KFZHNShmGmn4VHgVDMJWbRLQhCXTP\nHd9MEFWL87lOPkNaRTkNWgor5+259/rnFoXYU9QscuqRd9uiX2r6z+2UYFHoPq7O\nMeT8ebXcrjtB6XessUk0q8VmKixlCIa9BLIy6FX/rVDCQIaD/UkvHj1sFwngh+bN\nmp/jCQ9pFy5R8onpxqgOSF2cC5j/U1Cf+3apQArVsdxbsy1fOkH4+D4BrHrAZd12\n13Eobo/uelfu1dMgB9v34gBw69tNqJWaoOtodjPh0qhqDZenNMziJdLdyMN82eF7\nzSAjntPCUGlUE1l640HXxgZr6A+nN2kIx2ahqpxAgQKBgQDdjD2YnEVwp7l51DkY\ncl1LqbOlqWFIIkNnPJgKEFejAwvoGq2siqBJgqnbfV06FaUAF3RlJX/GB5HK3BVr\nq1gQ9+VO2MhzYv44AZijJpBdyuslKQ+CvC3y9KnoNpgZu1oM5nfElxHxMG1us3rD\nULpfF33Gn/u+K7NziEhW1GvElwKBgQD+d7ERWYx/sC+kcvAjKkSGoryzgorwUT/E\nrzQ36BSZLqFsXB1IKaFfYvHWNsBcEW4S8SfFZXYmSB2udMbuZlNBm9e6A9RAiUCO\n3m//K/gZP3u03jMsXS4G2gWoXzVsNXOckOOt4vgctFXyxn9RbQ4JudzofGHWZ+NA\nBnAV25QukwKBgHYjaVkuw6yeE76OV1/c5DkLpjtJhhGUC8NKQXzkWAcaAchkKYZf\nabepUHA1engVwKW63BtvkqIDuU+malm+xbhOqF2SJdm5yPwOhdlCICuToC5xpc6+\nD/aFVvD348Wc7RkB8I3JTQ0DGOe2F1l9e9RnT2+SMginfwq1enWq0kjDAoGAUnSO\nV8Tgle+NQIhN79ceZVIOO0ytoLlzJFRxYzw8kHZfsDEY++0hcTsqifMr2al8NX8X\nGAuMgVMU6xbD7zQQ/k11Vb0v5cmTtbe2KsUgm23KtAzcICABbg7vjmNreCjJ0Y3R\neOL26rY0s3pGfygLSHOFdX/4Y/U92d08LJj+JykCgYBkt6bZBZcxASj9lbl6txsR\n79c/SudB5k1kuVmjNJ91wKRmfR+t0jqN4hmb9y3Hjo5nvidU/AQjWJEpa6EPGqyr\nCu0kAr2rThPDV/v7Q+vHECEoQ2xhzt9NlZ3ABN9ZDQdOGn9fJHjdPrF8+iy2/rUa\nu/9uJDXUezlr6GxECtGWrQ==\n-----END PRIVATE KEY-----\n",
+                alternate: "-----BEGIN RSA PRIVATE KEY-----\nMIIEogIBAAKCAQEA3Di6iwdjfdj1fEPHZz8qtyAvcvF7bsD+VrsbhQVFQ7LH/Mjn\nZPM+KI/XUCRG9Wlm5nG7WowOGMh5wDHEetFZ0PxjuKJz0yCPkBghVgBWaFE3g+ib\nD9sMxawkwfRDMMi/QBTiWQHcQMd4QOo7DjkQhlKVfTFcNXwTNXWwGNOHovnhHa+E\nevX26JjExl4NmtALsctR98lXM9NhXO07THIi15cqMw1B7lBKFm9RA2xH/V/e5FqV\nuVHdlUw1wm9/tDD8vlAQ6bRoaTiZGkgO1s2CpesixwMwOGrAiOSsKCN/iBFal/xD\nxqArEBlPsLzZV4GXybdzJkd7ohncj1PlK4EEtQIDAQABAoIBABXUCal+Mf5nYu3O\nShWRzUoZhpp+FR4FQzCVm0S0IQl0zx3fTBBVi/O5Tj5DWkU5DVoKK+ftuff65xaF\n2FPULHLqkXfbol9q+s/tlGBR6D6uzjHk/Hm13K47Qel3rLFJNKvFZiosZQiGvQSy\nMuhV/61QwkCGg/1JLx49bBcJ4IfmzZqf4wkPaRcuUfKJ6caoDkhdnAuY/1NQn/t2\nqUAK1bHcW7MtXzpB+Pg+Aax6wGXddtdxKG6P7npX7tXTIAfb9+IAcOvbTaiVmqDr\naHYz4dKoag2XpzTM4iXS3cjDfNnhe80gI57TwlBpVBNZeuNB18YGa+gPpzdpCMdm\noaqcQIECgYEA3Yw9mJxFcKe5edQ5GHJdS6mzpalhSCJDZzyYChBXowML6BqtrIqg\nSYKp231dOhWlABd0ZSV/xgeRytwVa6tYEPflTtjIc2L+OAGYoyaQXcrrJSkPgrwt\n8vSp6DaYGbtaDOZ3xJcR8TBtbrN6w1C6Xxd9xp/7viuzc4hIVtRrxJcCgYEA/nex\nEVmMf7AvpHLwIypEhqK8s4KK8FE/xK80N+gUmS6hbFwdSCmhX2Lx1jbAXBFuEvEn\nxWV2JkgdrnTG7mZTQZvXugPUQIlAjt5v/yv4GT97tN4zLF0uBtoFqF81bDVznJDj\nreL4HLRV8sZ/UW0OCbnc6Hxh1mfjQAZwFduULpMCgYB2I2lZLsOsnhO+jldf3OQ5\nC6Y7SYYRlAvDSkF85FgHGgHIZCmGX2m3qVBwNXp4FcClutwbb5KiA7lPpmpZvsW4\nTqhdkiXZucj8DoXZQiArk6AucaXOvg/2hVbw9+PFnO0ZAfCNyU0NAxjnthdZfXvU\nZ09vkjIIp38KtXp1qtJIwwKBgFJ0jlfE4JXvjUCITe/XHmVSDjtMraC5cyRUcWM8\nPJB2X7AxGPvtIXE7KonzK9mpfDV/FxgLjIFTFOsWw+80EP5NdVW9L+XJk7W3tirF\nIJttyrQM3CAgAW4O745ja3goydGN0Xji9uq2NLN6Rn8oC0hzhXV/+GP1PdndPCyY\n/icpAoGAZLem2QWXMQEo/ZW5ercbEe/XP0rnQeZNZLlZozSfdcCkZn0frdI6jeIZ\nm/ctx46OZ74nVPwEI1iRKWuhDxqsqwrtJAK9q04Tw1f7+0PrxxAhKENsYc7fTZWd\nwATfWQ0HThp/XyR43T6xfPostv61Grv/biQ11Hs5a+hsRArRlq0=\n-----END RSA PRIVATE KEY-----\n",
+                public: "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3Di6iwdjfdj1fEPHZz8q\ntyAvcvF7bsD+VrsbhQVFQ7LH/MjnZPM+KI/XUCRG9Wlm5nG7WowOGMh5wDHEetFZ\n0PxjuKJz0yCPkBghVgBWaFE3g+ibD9sMxawkwfRDMMi/QBTiWQHcQMd4QOo7DjkQ\nhlKVfTFcNXwTNXWwGNOHovnhHa+EevX26JjExl4NmtALsctR98lXM9NhXO07THIi\n15cqMw1B7lBKFm9RA2xH/V/e5FqVuVHdlUw1wm9/tDD8vlAQ6bRoaTiZGkgO1s2C\npesixwMwOGrAiOSsKCN/iBFal/xDxqArEBlPsLzZV4GXybdzJkd7ohncj1PlK4EE\ntQIDAQAB\n-----END PUBLIC KEY-----\n",
+                public_alternate: "-----BEGIN RSA PUBLIC KEY-----\nMIIBCgKCAQEA3Di6iwdjfdj1fEPHZz8qtyAvcvF7bsD+VrsbhQVFQ7LH/MjnZPM+\nKI/XUCRG9Wlm5nG7WowOGMh5wDHEetFZ0PxjuKJz0yCPkBghVgBWaFE3g+ibD9sM\nxawkwfRDMMi/QBTiWQHcQMd4QOo7DjkQhlKVfTFcNXwTNXWwGNOHovnhHa+EevX2\n6JjExl4NmtALsctR98lXM9NhXO07THIi15cqMw1B7lBKFm9RA2xH/V/e5FqVuVHd\nlUw1wm9/tDD8vlAQ6bRoaTiZGkgO1s2CpesixwMwOGrAiOSsKCN/iBFal/xDxqAr\nEBlPsLzZV4GXybdzJkd7ohncj1PlK4EEtQIDAQAB\n-----END RSA PUBLIC KEY-----\n",
+                token: "eyJhbGciOiJSUzI1NiIsImtpZCI6InJlZmVyZW5jZSIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMCwic3ViIjoiaW5kZXBlbmRlbnQtcmVmZXJlbmNlIn0.LeqAK2vzG9R4sCzGeqNBpzk7EfoBSXlBmStClbiCjwqPV9Q-TQAyDHTGzzxJtfmQWhlR9Yq2vJsu6c0OtkqRmSLxx271h4cafyiAPd_slfDEASjFn8bbRme3rbOYJqJDY1iKfgw9L2CtCqYHCavIGc4_VKHPwrfpiN5uWPbsAgp6kri8bzvGpj941BkgrXnjz2t1bpkUWkVCasWGbYKwk3f1yX9VAom-eyou-wzqydzXeXoDwI49-CtRgU1EuqD4IxLAVsBJPABrCj-_0GLGlmE64C8H72n2LHaKk-3gAtG4caT1GWLAVOaRQUN22gkgEPmZkIfVZYgz3gPNGKINXg",
+                claims: "{\"exp\":200,\"sub\":\"independent-reference\"}",
+            },
+            PemReference {
+                algorithm: Algorithm::RS256,
+                private: "-----BEGIN PRIVATE KEY-----\nMIIE8wIBADANBgkqhkiG9w0BAQEFAASCBN0wggTZAgEBAoIBAQCzgwBeNSJ/m5eG\nFFc2SUcTuLD5BZFPm6w2l5dLvsBF1suKY2+MYETYuoSAD7JSBjoOwXO1prRtsiCL\nEQWbLofsKKIIylNdF6nNamR96yTu81zmZlzrTqhBW6le89Tsr3hMDvwVeSRLUuRX\n0Kl4RHN2PSPb3Go+N+ky+to1iO15TtJ5+x9k2sSwNOuwhIOGT633YjrjxCoQOpCF\nOzbMTCbbWE/JU/9+/5a/G5TuxPpqEL8L261BwqrhXNH8l2eP9/EhwStJrLgR076x\n8rMWTMnVNpwZkm0zl98Ls5c8oga30zICgbsTxxQnqjDZ+GofDli/tZHcaYx2B+cr\nRzKRVSfjAgMBAAECggEALEOBM7mmaBDVrBoX5yrqe9Ju0PiufBLGxC9c/zBp+M6e\nIeGi/9o9H7PeODWmotMmPb016vTQSLxDigcIetteaL0cN06sf6f2FtDFNsdktAcO\nQUG8Z6/jwJ+oPKC1qu9BVe/LN2UhBwinroZAhAypqWVHpC3EEafDwvg/T+JrHCq2\nv6X2mJ0EcjEnsagEp57L4B3Ic8MyweWA340FtCTVGqTx9PCpv5b44pJ3BvWbZrCr\nRlGMdQQIws6mx5C2pIwNR9t2EdEEliEnVDmc03RLFAGzBCa3Fb9XwhIuZhxovBS/\nOImui7kPQPEIAkp9w/i89U+3mRWnUraolBEiNmEgAQJWA0kDazejD/PrRaNq5V5l\nRnP4UYOVPYYrWkRZhM6ThVrOrUsAKrMk5ShxO5Nmo5PjI/sGWpGGSlho0/3b+INL\nvb6oWt/FkX1FXAbZWEiia2/OPVAQlz0CVgfkjRR6Vm6t16obuTKujGhdfSnDDB7i\nbgbItmeLnZlJ27NlR1dZo006EZFPigDhqAMC0fLXC1yJDZ5QIb3zzJVAyCqBEYLQ\ngLXwXOC58slVD0x1QZEhAlYCPb9tV+mQqpFpUtFMZZel9twDkEcyT+QnktWXeu69\nXXP+WVplxw12oJ6PTEILeorNMyXkh78b3TC230tAQSJc8kMcq+i3FsVIwQtp5TOZ\nJA+JWKPY6QJWAyRvNrPuLWpw7nzTIuZzaCmwZywMa09i1riaRmdDe3/4RFgSKyi4\n50ozLFMqcmdk6K36wF/1WgYGsfzdMi8aSGHeT23LdvVkCQuFLsNZcea3jI0yaYEC\nVgFmTrr58PhkRGriytP7wwytMXwm0tmHOW3LBk2HkDCr8OW6RZ1S7MRixWD6KTnh\npLk+TRzc3rQkuEYDKUd/wzY5Pgkz0QvN2aT2Wa4dM9l+n/NdDwnuMIIBDDCCAQgC\nVgbsT6vBXGROgpWR2KN5cSRHP3ydzgaeQLgD2o+t+ZrGFrqNc+lWYmQ5vjb4NliC\nE8OmOO7qMwfSIibT6zJcvqPsrpnaXtq2TpEcQC1zp88iDLx7Kaa/AlYFpNk+uKBN\n1gN3VDM88mBepwcG3M99bb5tRhcEU1zN5Pfalj8M1zPXaYu83JXRihn6wqRfgeag\nVZsp9FIl+J4inW2qV/BEdaOPgWyAoW0I3EVt0yqdmQJWBlZyQyF2ZX9Q9koGsyCP\nBRkR5USer7AEGz8z3LGpEBCirz8oolRB0bLXSrpZcQ6i8U0TCDaIw/owNg80eltm\nwC2dheisHsrhWDiTjn7DU1y6UMrA/HM=\n-----END PRIVATE KEY-----\n",
+                alternate: "-----BEGIN RSA PRIVATE KEY-----\nMIIE2QIBAQKCAQEAs4MAXjUif5uXhhRXNklHE7iw+QWRT5usNpeXS77ARdbLimNv\njGBE2LqEgA+yUgY6DsFztaa0bbIgixEFmy6H7CiiCMpTXRepzWpkfesk7vNc5mZc\n606oQVupXvPU7K94TA78FXkkS1LkV9CpeERzdj0j29xqPjfpMvraNYjteU7Sefsf\nZNrEsDTrsISDhk+t92I648QqEDqQhTs2zEwm21hPyVP/fv+WvxuU7sT6ahC/C9ut\nQcKq4VzR/Jdnj/fxIcErSay4EdO+sfKzFkzJ1TacGZJtM5ffC7OXPKIGt9MyAoG7\nE8cUJ6ow2fhqHw5Yv7WR3GmMdgfnK0cykVUn4wIDAQABAoIBACxDgTO5pmgQ1awa\nF+cq6nvSbtD4rnwSxsQvXP8wafjOniHhov/aPR+z3jg1pqLTJj29Ner00Ei8Q4oH\nCHrbXmi9HDdOrH+n9hbQxTbHZLQHDkFBvGev48CfqDygtarvQVXvyzdlIQcIp66G\nQIQMqallR6QtxBGnw8L4P0/iaxwqtr+l9pidBHIxJ7GoBKeey+AdyHPDMsHlgN+N\nBbQk1Rqk8fTwqb+W+OKSdwb1m2awq0ZRjHUECMLOpseQtqSMDUfbdhHRBJYhJ1Q5\nnNN0SxQBswQmtxW/V8ISLmYcaLwUvziJrou5D0DxCAJKfcP4vPVPt5kVp1K2qJQR\nIjZhIAECVgNJA2s3ow/z60WjauVeZUZz+FGDlT2GK1pEWYTOk4Vazq1LACqzJOUo\ncTuTZqOT4yP7BlqRhkpYaNP92/iDS72+qFrfxZF9RVwG2VhIomtvzj1QEJc9AlYH\n5I0UelZurdeqG7kyroxoXX0pwwwe4m4GyLZni52ZSduzZUdXWaNNOhGRT4oA4agD\nAtHy1wtciQ2eUCG988yVQMgqgRGC0IC18FzgufLJVQ9MdUGRIQJWAj2/bVfpkKqR\naVLRTGWXpfbcA5BHMk/kJ5LVl3ruvV1z/llaZccNdqCej0xCC3qKzTMl5Ie/G90w\ntt9LQEEiXPJDHKvotxbFSMELaeUzmSQPiVij2OkCVgMkbzaz7i1qcO580yLmc2gp\nsGcsDGtPYta4mkZnQ3t/+ERYEisouOdKMyxTKnJnZOit+sBf9VoGBrH83TIvGkhh\n3k9ty3b1ZAkLhS7DWXHmt4yNMmmBAlYBZk66+fD4ZERq4srT+8MMrTF8JtLZhzlt\nywZNh5Awq/DlukWdUuzEYsVg+ik54aS5Pk0c3N60JLhGAylHf8M2OT4JM9ELzdmk\n9lmuHTPZfp/zXQ8J7jCCAQwwggEIAlYG7E+rwVxkToKVkdijeXEkRz98nc4GnkC4\nA9qPrfmaxha6jXPpVmJkOb42+DZYghPDpjju6jMH0iIm0+syXL6j7K6Z2l7atk6R\nHEAtc6fPIgy8eymmvwJWBaTZPrigTdYDd1QzPPJgXqcHBtzPfW2+bUYXBFNczeT3\n2pY/DNcz12mLvNyV0YoZ+sKkX4HmoFWbKfRSJfieIp1tqlfwRHWjj4FsgKFtCNxF\nbdMqnZkCVgZWckMhdmV/UPZKBrMgjwUZEeVEnq+wBBs/M9yxqRAQoq8/KKJUQdGy\n10q6WXEOovFNEwg2iMP6MDYPNHpbZsAtnYXorB7K4Vg4k45+w1NculDKwPxz\n-----END RSA PRIVATE KEY-----\n",
+                public: "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs4MAXjUif5uXhhRXNklH\nE7iw+QWRT5usNpeXS77ARdbLimNvjGBE2LqEgA+yUgY6DsFztaa0bbIgixEFmy6H\n7CiiCMpTXRepzWpkfesk7vNc5mZc606oQVupXvPU7K94TA78FXkkS1LkV9CpeERz\ndj0j29xqPjfpMvraNYjteU7SefsfZNrEsDTrsISDhk+t92I648QqEDqQhTs2zEwm\n21hPyVP/fv+WvxuU7sT6ahC/C9utQcKq4VzR/Jdnj/fxIcErSay4EdO+sfKzFkzJ\n1TacGZJtM5ffC7OXPKIGt9MyAoG7E8cUJ6ow2fhqHw5Yv7WR3GmMdgfnK0cykVUn\n4wIDAQAB\n-----END PUBLIC KEY-----\n",
+                public_alternate: "-----BEGIN RSA PUBLIC KEY-----\nMIIBCgKCAQEAs4MAXjUif5uXhhRXNklHE7iw+QWRT5usNpeXS77ARdbLimNvjGBE\n2LqEgA+yUgY6DsFztaa0bbIgixEFmy6H7CiiCMpTXRepzWpkfesk7vNc5mZc606o\nQVupXvPU7K94TA78FXkkS1LkV9CpeERzdj0j29xqPjfpMvraNYjteU7SefsfZNrE\nsDTrsISDhk+t92I648QqEDqQhTs2zEwm21hPyVP/fv+WvxuU7sT6ahC/C9utQcKq\n4VzR/Jdnj/fxIcErSay4EdO+sfKzFkzJ1TacGZJtM5ffC7OXPKIGt9MyAoG7E8cU\nJ6ow2fhqHw5Yv7WR3GmMdgfnK0cykVUn4wIDAQAB\n-----END RSA PUBLIC KEY-----\n",
+                token: "eyJhbGciOiJSUzI1NiIsImtpZCI6InJlZmVyZW5jZSIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMCwic3ViIjoiaW5kZXBlbmRlbnQtcmVmZXJlbmNlIn0.hffKKyHJcyKo4Spm-ZZCNDcb0CbqsE05ydbF-9ipNGWUUq2hOO7fPQttYN8wMogIQAKPsWUlfGXgZtr_g2EXRKR8RKS9sDwP02LOBsJ7GTfWfrx-8E90G4zgCPbRVLMRKtfiLV3tasrQKtbt_ObReE-3z0n1CQQ44irVxiOqVe2VnwOtRJmxp2IesU2yaW-2tI3gLdrqTMNcW4egHwH2FzVD-iqbfA1oGty_NSheMnO9SxeiThvsu4MrN-KvyviR5ciuZ1esWAef1D5rBDcs28rVg9Dmge9V8XtRfkhDQvOruu45sIEEjrkZStRmivkueWX1nCSG-L8CQbM4A8w66Q",
+                claims: "{\"exp\":200,\"sub\":\"independent-reference\"}",
+            },
+            PemReference {
+                algorithm: Algorithm::ES256,
+                private: "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgAAAAAAAAAAAAAAAA\nAAAAAAAAAAAAAAAAAAAAAAAAAAGhRANCAARrF9Hy4SxCR/i85uVjpEDydwN9gS3r\nM6D0oTlF2JjClk/jQuL+Gn+bjufrSnwPnhYrzjNXazFezsu2QGg3v1H1\n-----END PRIVATE KEY-----\n",
+                alternate: "-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABoAoGCCqGSM49\nAwEHoUQDQgAEaxfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpZP40Li/hp/\nm47n60p8D54WK84zV2sxXs7LtkBoN79R9Q==\n-----END EC PRIVATE KEY-----\n",
+                public: "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEaxfR8uEsQkf4vOblY6RA8ncDfYEt\n6zOg9KE5RdiYwpZP40Li/hp/m47n60p8D54WK84zV2sxXs7LtkBoN79R9Q==\n-----END PUBLIC KEY-----\n",
+                public_alternate: "",
+                token: "eyJhbGciOiJFUzI1NiIsImtpZCI6InJlZmVyZW5jZSIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMCwic3ViIjoiaW5kZXBlbmRlbnQtcmVmZXJlbmNlIn0.NaHw-cgR6sjF_kaaqvLwXx4xjQKr-4TRdl2Wn-uaEYeJ13-VySaFxOIqKucrxJXOj8NAPeGrouzcBeYFnnd0uA",
+                claims: "{\"exp\":200,\"sub\":\"independent-reference\"}",
+            },
+            PemReference {
+                algorithm: Algorithm::EdDSA,
+                private: "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n-----END PRIVATE KEY-----\n",
+                alternate: "",
+                public: "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAO2onvM62pC1io6jQKm8Nc2UyFXcd4kOmOsBIoYtZ2ik=\n-----END PUBLIC KEY-----\n",
+                public_alternate: "",
+                token: "eyJhbGciOiJFZERTQSIsImtpZCI6InJlZmVyZW5jZSIsInR5cCI6IkpXVCJ9.eyJleHAiOjIwMCwic3ViIjoiaW5kZXBlbmRlbnQtcmVmZXJlbmNlIn0.IE1_gReXIL8QqJun-LV5YMb_ynXRLg8ZlgtZkuvQnj70Yb1_jUCUmqDr8jCjyxRdVoSBNa6D8oWCRYMLuhtqDQ",
+                claims: "{\"exp\":200,\"sub\":\"independent-reference\"}",
+            },
+        ],
+    )
+}
+
+#[test]
+fn pem_keys_verify_independent_signatures_and_deterministic_signing_matches_reference() -> () {
+    for vector in pem_references() {
+        let policy = Validation { now: Option::Some(100), ..Validation::new(vector.algorithm) };
+        let private = testing::expect_ok(
+            Key::private_pem(vector.algorithm, vector.private, "reference"),
+            "PKCS8",
+        );
+        let public = testing::expect_ok(
+            Key::public_pem(vector.algorithm, vector.public, "reference"),
+            "PKIX",
+        );
+        for key in[private, public] {
+            let result = testing::expect_ok(
+                jwt::verify(vector.token, Vec::from_array([key]), policy),
+                "independent signature",
+            );
+            testing::assert_eq(result.claims_json(), vector.claims);
+        }
+        let signed = testing::expect_ok(
+            jwt::sign_json(private, vector.claims, SignOptions::new()),
+            "private signing",
+        );
+        if vector.algorithm != Algorithm::ES256 {
+            testing::assert_eq(signed, vector.token);
+        }
+        testing::assert_ok(jwt::verify(signed, Vec::from_array([public]), policy));
+        if vector.alternate != "" {
+            let alternative = testing::expect_ok(
+                Key::private_pem(vector.algorithm, vector.alternate, "reference"),
+                "PKCS1 or SEC1",
+            );
+            testing::assert_ok(jwt::verify(vector.token, Vec::from_array([alternative]), policy));
+        }
+        if vector.public_alternate != "" {
+            let alternative = testing::expect_ok(
+                Key::public_pem(vector.algorithm, vector.public_alternate, "reference"),
+                "PKCS1 public",
+            );
+            testing::assert_ok(jwt::verify(vector.token, Vec::from_array([alternative]), policy));
+        }
+        for algorithm in[Algorithm::HS256, Algorithm::RS256, Algorithm::ES256, Algorithm::EdDSA] {
+            if algorithm != vector.algorithm {
+                testing::assert(Key::public_pem(algorithm, vector.public, "").is_err());
+                testing::assert(Key::private_pem(algorithm, vector.private, "").is_err());
+            }
+        }
+        testing::assert(Key::public_pem(vector.algorithm, vector.private, "").is_err());
+        testing::assert(
+            Key::public_pem(vector.algorithm, vector.public + vector.public, "").is_err(),
+        );
+        testing::assert(
+            Key::private_pem(vector.algorithm, vector.private + vector.private, "").is_err(),
+        );
+        testing::assert(jwt::sign_json(public, vector.claims, SignOptions::new()).is_err());
+        for pem in[
+            vector.public,
+            " \t\n" + vector.public + " \t\n",
+            vector.public.replace("\n", "\r\n"),
+        ] {
+            testing::assert_ok(Key::public_pem(vector.algorithm, pem, ""));
+        }
+        for pem in[
+            vector.private,
+            " \t\n" + vector.private + " \t\n",
+            vector.private.replace("\n", "\r\n"),
+        ] {
+            testing::assert_ok(Key::private_pem(vector.algorithm, pem, ""));
+        }
+    }
+}
+
+#[test]
+fn shared_keys_support_concurrent_signing_and_verification() -> () {
+    let shared = key("shared");
+    task::scope(
+        |scope| {
+            let tasks = Vec::new();
+            for _ in 0..8 {
+                tasks.push(
+                    scope.spawn(
+                        |_| {
+                            for _ in 0..20 {
+                                let token = testing::expect_ok(
+                                    jwt::sign_json(shared, "{\"exp\":200}", SignOptions::new()),
+                                    "shared signing",
+                                );
+                                let policy = Validation {
+                                    now: Option::Some(100),
+                                    ..Validation::new(Algorithm::HS256),
+                                };
+                                testing::assert_ok(
+                                    jwt::verify(token, Vec::from_array([shared]), policy),
+                                );
+                            }
+                        },
+                    ),
+                );
+            }
+            let _ = task::join_all(tasks);
+        },
+    );
+}

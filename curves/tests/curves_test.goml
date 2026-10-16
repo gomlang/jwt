@@ -1,0 +1,293 @@
+package tests;
+
+use ecosystem::jwt::curves;
+use std::testing;
+use std::encoding::hex;
+use std::bytes;
+
+fn raw(value: string) -> Vec[u8] {
+    testing::expect_ok(hex::decode(value), "decode fixture").to_vec()
+}
+
+fn rendered(value: Vec[u8]) -> string {
+    hex::encode(bytes::Bytes::from_vec(value))
+}
+
+#[test]
+fn p256_independent_vectors() -> () {
+    let public = testing::expect_ok(
+        curves::p256_public(raw("0000000000000000000000000000000000000000000000000000000000000001")),
+        "derive P-256 public key",
+    );
+    testing::assert_eq(
+        rendered(public.x),
+        "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296",
+    );
+    testing::assert_eq(
+        rendered(public.y),
+        "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+    );
+    testing::assert(curves::valid_p256(public.x, public.y));
+    testing::assert(
+        curves::p256_verify(
+            public.x,
+            public.y,
+            raw("696e646570656e64656e7420502d323536206d6573736167652030"),
+            raw(
+                "764a95d949e048ec2f36da08e77e95463a8703033cb083b4d41e71eff5463e76a72091246c67021114e100fb33f640362007d010cafbdaa3cc78148e9f815a29",
+            ),
+        ),
+    );
+    let public = testing::expect_ok(
+        curves::p256_public(raw("0000000000000000000000000000000000000000000000000000000000000002")),
+        "derive P-256 public key",
+    );
+    testing::assert_eq(
+        rendered(public.x),
+        "7cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc47669978",
+    );
+    testing::assert_eq(
+        rendered(public.y),
+        "07775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1",
+    );
+    testing::assert(curves::valid_p256(public.x, public.y));
+    testing::assert(
+        curves::p256_verify(
+            public.x,
+            public.y,
+            raw("696e646570656e64656e7420502d323536206d6573736167652031"),
+            raw(
+                "790ea5af9ce9bed6d1d377e4b8179764d8943922d0e6b0ccd036de9f919c6b10fc280000ec6afc34aa0a1d9031652f4bf13a07a092912f16db36838f4a13e019",
+            ),
+        ),
+    );
+    let public = testing::expect_ok(
+        curves::p256_public(raw("0000000000000000000000000000000000000000000000000000000000000003")),
+        "derive P-256 public key",
+    );
+    testing::assert_eq(
+        rendered(public.x),
+        "5ecbe4d1a6330a44c8f7ef951d4bf165e6c6b721efada985fb41661bc6e7fd6c",
+    );
+    testing::assert_eq(
+        rendered(public.y),
+        "8734640c4998ff7e374b06ce1a64a2ecd82ab036384fb83d9a79b127a27d5032",
+    );
+    testing::assert(curves::valid_p256(public.x, public.y));
+    testing::assert(
+        curves::p256_verify(
+            public.x,
+            public.y,
+            raw("696e646570656e64656e7420502d323536206d6573736167652032"),
+            raw(
+                "eebc5fa4d658c9963f4ff75fca8e7223bd93eb698e27977f23e00531b3c81bf20cdf4d4f520e603c4dc453275549d74b7ee18a99ba7d152bd62cb389ea32a9ec",
+            ),
+        ),
+    );
+    let public = testing::expect_ok(
+        curves::p256_public(raw("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632550")),
+        "derive P-256 public key",
+    );
+    testing::assert_eq(
+        rendered(public.x),
+        "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296",
+    );
+    testing::assert_eq(
+        rendered(public.y),
+        "b01cbd1c01e58065711814b583f061e9d431cca994cea1313449bf97c840ae0a",
+    );
+    testing::assert(curves::valid_p256(public.x, public.y));
+    testing::assert(
+        curves::p256_verify(
+            public.x,
+            public.y,
+            raw("696e646570656e64656e7420502d323536206d6573736167652033"),
+            raw(
+                "38bd1a0c98b95e065150e4029639be351d36fa8094dc8f712eebb4c77c934223dfe14af1cbe4978017694f679bb1321adb52683272e33d922b9fca978e50be00",
+            ),
+        ),
+    );
+    let public = testing::expect_ok(
+        curves::p256_public(raw("18e5d68aea41ab3e5d7ad709c60f8dc504c9b86f2c3677934fee6b338ee079e4")),
+        "derive P-256 public key",
+    );
+    testing::assert_eq(
+        rendered(public.x),
+        "33f9d4196f78d0b8b386557d9d01113fb759ee32175c3a0d9e85ef57c3d74ecd",
+    );
+    testing::assert_eq(
+        rendered(public.y),
+        "231d8919cb795bc989d09ffbee41fe91e0173487c6c751322868ba96f27450d4",
+    );
+    testing::assert(curves::valid_p256(public.x, public.y));
+    testing::assert(
+        curves::p256_verify(
+            public.x,
+            public.y,
+            raw("696e646570656e64656e7420502d323536206d6573736167652034"),
+            raw(
+                "13ee733659ae834ba4775bc7f4de9d04091dd0d9ce92cb43b9554ace89970a55d9ad26bbb830a3eb2bc89893b0f8fa27af8ecce9ddd3ecc53253ecbae0f29661",
+            ),
+        ),
+    );
+}
+
+#[test]
+fn ed25519_independent_vectors() -> () {
+    let seed = raw("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
+    let public = testing::expect_ok(curves::ed25519_public(seed), "derive Ed25519 public key");
+    testing::assert_eq(
+        rendered(public),
+        "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+    );
+    let message = raw("");
+    let signature = testing::expect_ok(curves::ed25519_sign(seed, message), "sign Ed25519");
+    testing::assert_eq(
+        rendered(signature),
+        "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b",
+    );
+    testing::assert(curves::ed25519_verify(public, message, signature));
+    let seed = raw("4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb");
+    let public = testing::expect_ok(curves::ed25519_public(seed), "derive Ed25519 public key");
+    testing::assert_eq(
+        rendered(public),
+        "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+    );
+    let message = raw("72");
+    let signature = testing::expect_ok(curves::ed25519_sign(seed, message), "sign Ed25519");
+    testing::assert_eq(
+        rendered(signature),
+        "92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00",
+    );
+    testing::assert(curves::ed25519_verify(public, message, signature));
+    let seed = raw("c5aa8df43f9f837bedb7442f31dcb7b166d38535076f094b85ce3a2e0b4458f7");
+    let public = testing::expect_ok(curves::ed25519_public(seed), "derive Ed25519 public key");
+    testing::assert_eq(
+        rendered(public),
+        "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025",
+    );
+    let message = raw("af82");
+    let signature = testing::expect_ok(curves::ed25519_sign(seed, message), "sign Ed25519");
+    testing::assert_eq(
+        rendered(signature),
+        "6291d657deec24024827e69c3abe01a30ce548a284743a445e3680d7db5ac3ac18ff9b538d16f290ae67f760984dc6594a7c15e9716ed28dc027beceea1ec40a",
+    );
+    testing::assert(curves::ed25519_verify(public, message, signature));
+    let seed = raw("9d67a3d807e154c087e397028c08a2cf6d0c0e89d9d87844ab2e91c3ed4fb290");
+    let public = testing::expect_ok(curves::ed25519_public(seed), "derive Ed25519 public key");
+    testing::assert_eq(
+        rendered(public),
+        "310da8cddc65258bb0dffc29906e0e20c5b3e0966d7dcc5665fa186825a4d152",
+    );
+    let message = raw("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e");
+    let signature = testing::expect_ok(curves::ed25519_sign(seed, message), "sign Ed25519");
+    testing::assert_eq(
+        rendered(signature),
+        "cdd51fb8bcf5fc9f6466356905b0e3ddded155c6ff5c9a0f864cd9668f2179ecd8ba969b9e1a02f46c50172c87fe359aeb926f6012ea32cdd82c16acfd93f90c",
+    );
+    testing::assert(curves::ed25519_verify(public, message, signature));
+    let seed = raw("4abf33edc0b891136f2fe70878f6d41f36ecd58b591de59b92fec752c30428d9");
+    let public = testing::expect_ok(curves::ed25519_public(seed), "derive Ed25519 public key");
+    testing::assert_eq(
+        rendered(public),
+        "3d420b1a4d9e33a57740a94325e64d65471129cd16f566ac702bbbda525d3143",
+    );
+    let message = raw(
+        "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f",
+    );
+    let signature = testing::expect_ok(curves::ed25519_sign(seed, message), "sign Ed25519");
+    testing::assert_eq(
+        rendered(signature),
+        "8c6cdc48b35e918ef4c7de5222cd5d3ca25992d43318771e5deb6da70d498f8aaa339b9a851072d0db92aab420244a1a5a389308ac6a77b537ce9035d3874402",
+    );
+    testing::assert(curves::ed25519_verify(public, message, signature));
+    let seed = raw("4425ab616c4c5e5664d098e772b86a12b57e0b7e1653deaae07f5db4c2e24855");
+    let public = testing::expect_ok(curves::ed25519_public(seed), "derive Ed25519 public key");
+    testing::assert_eq(
+        rendered(public),
+        "84c91045a153b918f88826748db71f20b8bf4da7eb4ee1210a45129ecaf7b51f",
+    );
+    let message = raw(
+        "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e",
+    );
+    let signature = testing::expect_ok(curves::ed25519_sign(seed, message), "sign Ed25519");
+    testing::assert_eq(
+        rendered(signature),
+        "3466617d8393cd03548c830a01839b4e426e46b550cfd2e88f59fcafc9f009cdd884691ce6358b05dd3734b5453f5ce49f35d2366c2cc9049f17cc61854efa01",
+    );
+    testing::assert(curves::ed25519_verify(public, message, signature));
+    let seed = raw("803b5f0093f37cc294f1f4be67fb8fb2c45a05f8d4a36ad648a4e85042240258");
+    let public = testing::expect_ok(curves::ed25519_public(seed), "derive Ed25519 public key");
+    testing::assert_eq(
+        rendered(public),
+        "82404c08ed2a61e327002e82ecfb1060c3578330c9d0b42b77571ce4ba2c7926",
+    );
+    let message = raw(
+        "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff00",
+    );
+    let signature = testing::expect_ok(curves::ed25519_sign(seed, message), "sign Ed25519");
+    testing::assert_eq(
+        rendered(signature),
+        "eb7dcc18c1df35b28827f3dfbcd6f299d9eaf73518cfcc1a4728e2e94ad36f58ed853007bba035f7806ffb9be80cd0ad40bb0371c4242a746f425429779e860f",
+    );
+    testing::assert(curves::ed25519_verify(public, message, signature));
+}
+
+#[test]
+fn p256_signatures_bind_message_and_scalar_ranges() -> () {
+    let d = raw("0000000000000000000000000000000000000000000000000000000000000001");
+    let public = testing::expect_ok(curves::p256_public(d), "public key");
+    let message = raw("00010203040506070809");
+    let signature = testing::expect_ok(curves::p256_sign(d, message), "P-256 signing");
+    testing::assert(curves::p256_verify(public.x, public.y, message, signature));
+    testing::assert(!curves::p256_verify(public.x, public.y, raw("00"), signature));
+    testing::assert(!curves::p256_verify(public.x, public.y, message, raw("00")));
+    let invalid = raw("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551");
+    testing::assert(curves::p256_public(invalid).is_err());
+    testing::assert(curves::p256_public(raw("00")).is_err());
+    testing::assert(curves::p256_public(Vec::new()).is_err());
+    testing::assert(
+        !curves::valid_p256(
+            raw("ffffffff00000001000000000000000000000000ffffffffffffffffffffffff"),
+            public.y,
+        ),
+    );
+    for index in 0..32 {
+        signature[index] = invalid[index];
+    }
+    testing::assert(!curves::p256_verify(public.x, public.y, message, signature));
+    for index in 0..32 {
+        signature[index] = 0;
+    }
+    testing::assert(!curves::p256_verify(public.x, public.y, message, signature));
+}
+
+#[test]
+fn ed25519_rejects_malformed_and_noncanonical_signatures() -> () {
+    let seed = raw("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
+    let public = testing::expect_ok(curves::ed25519_public(seed), "public key");
+    let signature = testing::expect_ok(curves::ed25519_sign(seed, Vec::new()), "signature");
+    testing::assert(!curves::ed25519_verify(public, raw("00"), signature));
+    testing::assert(!curves::ed25519_verify(public, Vec::new(), raw("00")));
+    testing::assert(!curves::ed25519_verify(raw("00"), Vec::new(), signature));
+    testing::assert(curves::ed25519_public(raw("00")).is_err());
+    testing::assert(curves::ed25519_sign(raw("00"), Vec::new()).is_err());
+    let order = raw("edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010");
+    for index in 0..32 {
+        signature[index + 32] = order[index];
+    }
+    testing::assert(!curves::ed25519_verify(public, Vec::new(), signature));
+    signature[63] = 255;
+    testing::assert(!curves::ed25519_verify(public, Vec::new(), signature));
+    let identity = raw("0100000000000000000000000000000000000000000000000000000000000000");
+    let identity_signature = raw(
+        "01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+    );
+    testing::assert(curves::ed25519_verify(identity, Vec::new(), identity_signature));
+    let alternate_identity = raw("eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f");
+    testing::assert(curves::ed25519_verify(alternate_identity, Vec::new(), identity_signature));
+    identity[31] = 128;
+    testing::assert(curves::ed25519_verify(identity, Vec::new(), identity_signature));
+    identity_signature[31] = 128;
+    testing::assert(!curves::ed25519_verify(identity, Vec::new(), identity_signature));
+}
