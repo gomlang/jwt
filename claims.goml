@@ -75,14 +75,14 @@ fn numeric_date(value: json::Value) -> Result[NumericDate, Error] {
     if text.byte_len() > 64 {
         return Result::Err(invalid)
     }
-    let exponent_index = text.byte_len();
+    let mut exponent_index = text.byte_len();
     for i in 0..text.byte_len() {
         if text.byte_get(i) == b'e' || text.byte_get(i) == b'E' {
             exponent_index = i;
             break
         }
     }
-    let exponent: i64 = 0;
+    let mut exponent: i64 = 0;
     if exponent_index < text.byte_len() {
         exponent = BigInt::parse(text.byte_slice(exponent_index + 1, text.byte_len())).map_err(
             |_| invalid,
@@ -91,9 +91,9 @@ fn numeric_date(value: json::Value) -> Result[NumericDate, Error] {
             return Result::Err(invalid)
         }
     }
-    let digits = "";
-    let fractional: i64 = 0;
-    let after_dot = false;
+    let mut digits = "";
+    let mut fractional: i64 = 0;
+    let mut after_dot = false;
     for i in 0..exponent_index {
         if text.byte_get(i) == b'.' {
             after_dot = true;
@@ -104,9 +104,9 @@ fn numeric_date(value: json::Value) -> Result[NumericDate, Error] {
             }
         }
     }
-    let coefficient = BigInt::parse(digits).map_err(|_| invalid)?;
+    let mut coefficient = BigInt::parse(digits).map_err(|_| invalid)?;
     let power = exponent - fractional;
-    let denominator = BigInt::one();
+    let mut denominator = BigInt::one();
     if power >= 0 {
         coefficient = coefficient.mul(BigInt::pow10(power.to_u64()).map_err(|_| invalid)?);
     } else {
@@ -195,7 +195,7 @@ fn validate_claims(claims: json::Value, validation: Validation, now: i64) -> Res
         }
     }
     if let Some(value) = json::field(claims, "aud") {
-        let matched = false;
+        let mut matched = false;
         for candidate in audience_values(value)? {
             if validation.audience == Option::Some(candidate) {
                 matched = true;

@@ -35,7 +35,7 @@ impl Key {
         }
         let marker = "-----BEGIN ".to_bytes();
         for i in 0..(secret.len() - marker.len() + 1) {
-            let matches = true;
+            let mut matches = true;
             for j in 0..marker.len() {
                 if secret[i + j] != marker[j] {
                     matches = false;
@@ -96,7 +96,7 @@ fn same_bytes(left: Vec[u8], right: Vec[u8]) -> bool {
     if left.len() != right.len() {
         return false
     }
-    let different: u8 = 0;
+    let mut different: u8 = 0;
     for i in 0..left.len() {
         different |= left[i] ^ right[i];
     }

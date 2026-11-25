@@ -86,7 +86,7 @@ pub fn verify(token: string, keys: Vec[Key], validation: Validation) -> Result[V
             }
         }
     }
-    let separators = 0;
+    let mut separators = 0;
     for index in 0..token.byte_len() {
         if token.byte_get(index) == b'.' {
             separators += 1;
@@ -113,7 +113,7 @@ pub fn verify(token: string, keys: Vec[Key], validation: Validation) -> Result[V
     let algorithm = field_text(header, "alg").ok_or(
         failure(ErrorKind::Algorithm, "disallowed token algorithm"),
     )?;
-    let permitted = false;
+    let mut permitted = false;
     for candidate in validation.algorithms {
         if candidate.to_string() == algorithm {
             permitted = true;
@@ -129,7 +129,7 @@ pub fn verify(token: string, keys: Vec[Key], validation: Validation) -> Result[V
             )
         }
     }
-    let id = "";
+    let mut id = "";
     if let Some(value) = json::field(header, "kid") {
         id = json::as_string(value).ok_or(failure(ErrorKind::Header, "invalid key id"))?;
         if id == "" || !valid_id(id) {
@@ -144,7 +144,7 @@ pub fn verify(token: string, keys: Vec[Key], validation: Validation) -> Result[V
     } else if validation.token_type != "" {
         return Result::Err(failure(ErrorKind::Header, "missing token type"))
     }
-    let selected: Option[Key] = Option::None;
+    let mut selected: Option[Key] = Option::None;
     for candidate in keys {
         if candidate.algorithm() == algorithm && (id == "" || candidate.key_id() == id) {
             if selected.is_some() {

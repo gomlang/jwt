@@ -31,7 +31,7 @@ fn public_jwk(algorithm: Algorithm, object: json::Value) -> Result[Key, Error] {
             return Result::Err(failure(ErrorKind::Key, "JWK key_ops must contain only verify"))
         }
     }
-    let id = "";
+    let mut id = "";
     if json::field(object, "kid").is_some() {
         id = field_text(object, "kid").ok_or(failure(ErrorKind::Key, "invalid JWK key id"))?;
         if id == "" || !valid_id(id) {
@@ -118,7 +118,7 @@ pub fn public_jwks(input: string, algorithms: Vec[Algorithm]) -> Result[Vec[Key]
                 failure(ErrorKind::Algorithm, "unsupported or disallowed JWK key type"),
             ),
         };
-        let allowed = false;
+        let mut allowed = false;
         for candidate in algorithms {
             if candidate == algorithm {
                 allowed = true;

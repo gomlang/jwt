@@ -102,7 +102,7 @@ fn rsa_der(input: Vec[u8], private: bool) -> Result[Material, Error] {
             let _ = der_unsigned(values[2])?;
         }
     }
-    let product = BigUint::one();
+    let mut product = BigUint::one();
     let de = d.mul(key.exponent);
     for prime in primes {
         if prime.is_zero() || prime.is_one() || !prime.is_odd() {
@@ -162,8 +162,8 @@ fn ec_private(input: Vec[u8], outer_curve: bool) -> Result[Material, Error] {
         || fields[1].tag != 4 {
         return Result::Err(der_error())
     }
-    let named = outer_curve;
-    let last_tag: u8 = 159;
+    let mut named = outer_curve;
+    let mut last_tag: u8 = 159;
     for i in 2..fields.len() {
         if fields[i].tag <= last_tag {
             return Result::Err(der_error())

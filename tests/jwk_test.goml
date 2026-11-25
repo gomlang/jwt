@@ -51,8 +51,8 @@ fn public_jwk_verifies_independent_rsa_ec_and_ed25519_tokens() -> () {
 
 #[test]
 fn public_jwks_preserves_order_and_verifies_mixed_algorithm_rotation() -> () {
-    let document = "{\"keys\":[";
-    let first = true;
+    let mut document = "{\"keys\":[";
+    let mut first = true;
     for (_, input, _) in jwk_vectors() {
         if !first {
             document += ",";
@@ -207,8 +207,8 @@ fn public_jwk_and_jwks_reject_duplicate_members_and_ambiguous_ids() -> () {
 
 #[test]
 fn public_jwks_enforces_the_64_key_bound() -> () {
-    let document = "{\"keys\":[";
-    let i = 0;
+    let mut document = "{\"keys\":[";
+    let mut i = 0;
     while i < 64 {
         if i > 0 {
             document += ",";

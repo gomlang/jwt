@@ -55,7 +55,7 @@ impl Montgomery {
     fn new(modulus: BigUint) -> Result[Montgomery, Error] {
         let length = (modulus.bits() + 31) / 32;
         let words = limbs(modulus.to_bytes_be(), length);
-        let inverse: u64 = 1;
+        let mut inverse: u64 = 1;
         for _ in 0..5 {
             inverse = (inverse * (4294967298 - ((words[0] * inverse) & 4294967295))) & 4294967295;
         }
@@ -77,7 +77,7 @@ impl Montgomery {
         let length = self.modulus.len();
         let scratch = zeros(length + 1);
         for i in 0..length {
-            let carry: u64 = 0;
+            let mut carry: u64 = 0;
             for j in 0..length {
                 let value = left[j] * right[i] + scratch[j] + carry;
                 scratch[j] = value & 4294967295;
@@ -99,7 +99,7 @@ impl Montgomery {
         }
         let output = zeros(length);
         let reduced = zeros(length);
-        let borrow: u64 = 0;
+        let mut borrow: u64 = 0;
         for i in 0..length {
             output[i] = scratch[i];
             let value = output[i] + 4294967296 - self.modulus[i] - borrow;
@@ -120,7 +120,7 @@ impl Montgomery {
     }
 
     fn pow(self: Montgomery, value: Vec[u64], exponent: Vec[u8]) -> Vec[u64] {
-        let result = self.identity;
+        let mut result = self.identity;
         for byte in exponent {
             for i in 0..8 {
                 let squared = self.mul(result, result);
